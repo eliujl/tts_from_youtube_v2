@@ -151,8 +151,11 @@ def _run(
     # Download-only options
     dl_kind: Any,
     dl_audio_format: Any,
-    progress=gr.Progress(track_tqdm=True),
+    progress: gr.Progress | None = None,
 ):
+    if progress is None:
+        progress = gr.Progress(track_tqdm=True)
+
     out_path = Path(out_dir).expanduser().resolve()
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -229,42 +232,82 @@ def _run(
 def build_app(default_out: str = "out") -> gr.Blocks:
     with gr.Blocks(title="y2tts — YouTube/Local → ASR → TTS") as demo:
         gr.Markdown(
-            "## y2tts — YouTube/Local file → transcription (faster-whisper) → TTS (Piper/Coqui)\n"
-            "Runs locally. Use a dedicated virtual environment to avoid dependency conflicts."
+            "## y2tts\n"
+            "Local YouTube/local-file pipeline for transcription and speech synthesis.\n\n"
+            "1. Choose source and task.\n"
+            "2. Provide either a YouTube URL or a local file.\n"
+            "3. Adjust ASR/TTS settings only if needed.\n"
+            "4. Run and download artifacts."
         )
 
-        with gr.Row():
-            source_type = gr.Dropdown(choices=["YouTube", "Local file"], value="YouTube", label="Source", scale=1)
-            task = gr.Dropdown(
-                choices=["Run (ASR + TTS)", "Transcribe only", "Download only (YouTube)"],
-                value="Run (ASR + TTS)",
-                label="Task",
-                scale=1,
+        with gr.Group():
+            gr.Markdown("### 1) Source + Task")
+            with gr.Row():
+                source_type = gr.Dropdown(
+                    choices=["YouTube", "Local file"],
+                    value="YouTube",
+                    label="Source",
+                    info="Pick where input comes from.",
+                    scale=1,
+                )
+                task = gr.Dropdown(
+                    choices=["Run (ASR + TTS)", "Transcribe only", "Download only (YouTube)"],
+                    value="Run (ASR + TTS)",
+                    label="Task",
+                    info="Run full pipeline, ASR-only, or download-only.",
+                    scale=1,
+                )
+            out_dir = gr.Textbox(
+                label="Output directory",
+                value=default_out,
+                info="One subfolder per video/file will be created here.",
             )
 
-        with gr.Row():
-            youtube_url = gr.Textbox(
-                label="YouTube URL (video or playlist)",
-                placeholder="https://youtu.be/… or https://youtube.com/playlist?list=…",
-                scale=3,
-            )
-            local_file = gr.File(
-                label="Upload local audio/video/text",
-                file_types=[".mp4", ".mkv", ".webm", ".mov", ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".txt", ".vtt"],
-                type="filepath",
-                scale=2,
+        with gr.Group():
+            gr.Markdown("### 2) Input")
+            with gr.Row():
+                youtube_url = gr.Textbox(
+                    label="YouTube URL",
+                    placeholder="https://youtu.be/… or https://youtube.com/playlist?list=…",
+                    info="Used when Source is YouTube.",
+                    scale=3,
+                )
+                local_file = gr.File(
+                    label="Local file upload",
+                    file_types=[
+                        ".mp4",
+                        ".mkv",
+                        ".webm",
+                        ".mov",
+                        ".mp3",
+                        ".wav",
+                        ".m4a",
+                        ".flac",
+                        ".ogg",
+                        ".aac",
+                        ".txt",
+                        ".vtt",
+                    ],
+                    type="filepath",
+                    scale=2,
+                )
+            gr.Markdown(
+                "Provide at least one input. For local `.txt`/`.vtt`, the app skips ASR and runs direct TTS."
             )
 
-        out_dir = gr.Textbox(label="Output directory", value=default_out)
-
-        with gr.Accordion("ASR (faster-whisper)", open=True):
+        with gr.Accordion("3) ASR Settings (faster-whisper)", open=False):
             with gr.Row():
                 model = gr.Textbox(
                     label="Model",
                     value="distil-large-v3",
-                    info="Examples: small, medium, large-v3, distil-large-v3",
+                    info="Examples: small, medium, large-v3, distil-large-v3.",
                 )
-                device = gr.Dropdown(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+                device = gr.Dropdown(
+                    label="Device",
+                    choices=["auto", "cpu", "cuda"],
+                    value="auto",
+                    info="Use auto unless you need to force CPU/GPU.",
+                )
             with gr.Row():
                 compute_type = gr.Textbox(
                     label="Compute type (optional)",
@@ -277,21 +320,35 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     placeholder="e.g. en, zh, fr (leave empty for auto)",
                 )
             with gr.Row():
-                vad = gr.Checkbox(label="VAD filter", value=True)
-                word_ts = gr.Checkbox(label="Word timestamps (slower)", value=False)
+                vad = gr.Checkbox(label="VAD filter", value=True, info="Helps remove long silence/noise.")
+                word_ts = gr.Checkbox(label="Word timestamps (slower)", value=False, info="Needed only for word-level timing.")
 
-        with gr.Accordion("TTS", open=True):
+        with gr.Accordion("4) TTS Settings", open=True):
             with gr.Row():
-                tts = gr.Dropdown(label="Backend", choices=["piper", "coqui", "none"], value="piper")
-                mp3 = gr.Checkbox(label="Also output mp3", value=False)
+                tts = gr.Dropdown(
+                    label="Backend",
+                    choices=["piper", "coqui", "none"],
+                    value="piper",
+                    info="Set to 'none' for transcription-only output.",
+                )
+                mp3 = gr.Checkbox(label="Also output mp3", value=False, info="Creates `tts.mp3` in addition to wav.")
 
             with gr.Accordion("Piper", open=False):
-                piper_voice = gr.Textbox(label="Voice", value="en_US-lessac-medium")
-                piper_data_dir = gr.Textbox(label="Voice data dir (optional)", value="", placeholder="e.g. ./voices")
+                piper_voice = gr.Textbox(label="Voice", value="en_US-lessac-medium", info="Voice name to synthesize with.")
+                piper_data_dir = gr.Textbox(
+                    label="Voice data dir (optional)",
+                    value="",
+                    placeholder="e.g. ./voices",
+                    info="Directory containing local Piper voice models.",
+                )
                 piper_cuda = gr.Checkbox(label="Use Piper CUDA (requires onnxruntime-gpu)", value=False)
 
             with gr.Accordion("Coqui", open=False):
-                coqui_model = gr.Textbox(label="Model name", value="tts_models/en/jenny/jenny")
+                coqui_model = gr.Textbox(
+                    label="Model name",
+                    value="tts_models/en/jenny/jenny",
+                    info="Coqui model identifier.",
+                )
                 coqui_speaker_wav = gr.File(
                     label="Speaker WAV (optional, for cloning models)",
                     file_types=[".wav"],
@@ -299,26 +356,28 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 )
                 coqui_language = gr.Textbox(label="Language (optional, needed for some multilingual models)", value="")
 
-        with gr.Accordion("Download-only (YouTube)", open=False):
+        with gr.Accordion("5) Download-Only Options (YouTube)", open=False):
             # allow_custom_value avoids Gradio raising if it receives an unexpected payload
             # (some versions can send non-string values under certain UI states).
             dl_kind = gr.Dropdown(
                 label="Download kind",
                 choices=["video", "audio"],
                 value="video",
+                info="Used only when Task is Download only (YouTube).",
                 allow_custom_value=True,
             )
             dl_audio_format = gr.Dropdown(
                 label="Audio format (for kind=audio)",
                 choices=["wav", "mp3"],
                 value="wav",
+                info="Used only when Download kind is audio.",
                 allow_custom_value=True,
             )
             gr.Markdown("- **video**: best video+audio merged (mp4 by default)\n- **audio**: best audio extracted to `wav` or `mp3`")
 
-        run_btn = gr.Button("Run", variant="primary")
-        status = gr.Textbox(label="Output folders", lines=4)
-        preview = gr.Textbox(label="Transcript preview (cleaned)", lines=12)
+        run_btn = gr.Button("Run Pipeline", variant="primary")
+        status = gr.Textbox(label="Result folders", lines=4)
+        preview = gr.Textbox(label="Transcript preview (cleaned)", lines=12, info="Shows latest cleaned transcript if available.")
         downloads = gr.Files(label="Artifacts", file_count="multiple")
 
         run_btn.click(

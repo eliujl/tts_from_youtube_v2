@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .pipeline import RunConfig, download_only, run_local_file, run_many, run_single
+from .pipeline import RunConfig, download_only, run_local_file, run_many
 
 app = typer.Typer(add_completion=False, help="Download YouTube audio → transcribe → resynthesize (local ASR/TTS).")
 console = Console()
