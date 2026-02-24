@@ -8,7 +8,7 @@ from typing import Literal
 from .audio import normalize_for_asr, wav_to_mp3
 from .asr.faster_whisper_asr import Transcript, transcribe_faster_whisper
 from .download import DownloadResult, DownloadVideoResult, VideoItem, download_best_audio, download_video, expand_url
-from .text import basic_cleanup
+from .text import basic_cleanup, load_text_input
 from .utils import ensure_dir, sanitize_filename
 
 
@@ -176,6 +176,28 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
 
     title = sanitize_filename(src.stem)
     work_dir = ensure_dir(cfg.out_dir / title)
+
+    # Text-first path: no ASR needed, synthesize directly from provided transcript.
+    if src.suffix.lower() in {".txt", ".vtt"}:
+        raw_text = load_text_input(src)
+        if not raw_text:
+            raise ValueError(f"No usable text found in input file: {src}")
+
+        (work_dir / "transcript.txt").write_text(raw_text + "\n", encoding="utf-8")
+        cleaned = basic_cleanup(raw_text)
+        (work_dir / "transcript_clean.txt").write_text(cleaned + "\n", encoding="utf-8")
+        tts_path = _synthesize(cleaned, work_dir, cfg)
+
+        _write_manifest(
+            work_dir,
+            {
+                "source_file": str(src),
+                "title": title,
+                "input_kind": "text",
+                "tts": {"backend": cfg.tts_backend, "output": str(tts_path) if tts_path else None},
+            },
+        )
+        return work_dir
 
     # Normalize/extract audio for ASR
     norm_wav = work_dir / "audio_16k.wav"

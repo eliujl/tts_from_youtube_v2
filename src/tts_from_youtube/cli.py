@@ -114,7 +114,7 @@ def download(
 
 @app.command()
 def local(
-    path: Path = typer.Argument(..., help="Local audio/video file path (e.g. mp4, mkv, wav, mp3)"),
+    path: Path = typer.Argument(..., help="Local audio/video/text file path (e.g. mp4, wav, mp3, txt, vtt)"),
     out: Path = typer.Option(Path("out"), "--out", "-o", help="Output directory"),
     model: str = typer.Option("distil-large-v3", "--model", help="faster-whisper model name"),
     device: str = typer.Option("auto", "--device", help="auto|cpu|cuda"),
@@ -131,7 +131,7 @@ def local(
     coqui_speaker_wav: Optional[Path] = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
     coqui_language: Optional[str] = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
 ):
-    """Run ASR/TTS on a local file (no YouTube)."""
+    """Run ASR/TTS on a local file (no YouTube). .txt/.vtt inputs skip ASR and run direct TTS."""
     cfg = RunConfig(
         out_dir=out,
         asr_model=model,

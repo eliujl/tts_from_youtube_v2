@@ -201,8 +201,8 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 scale=3,
             )
             local_file = gr.File(
-                label="Upload local audio/video",
-                file_types=[".mp4", ".mkv", ".webm", ".mov", ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"],
+                label="Upload local audio/video/text",
+                file_types=[".mp4", ".mkv", ".webm", ".mov", ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".txt", ".vtt"],
                 type="filepath",
                 scale=2,
             )
@@ -297,7 +297,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
         gr.Markdown(
             "### Notes\n"
             "- **Download only (YouTube)** skips ASR/TTS and just downloads media.\n"
-            "- **Local file** mode runs fully offline once you provide the file.\n"
+            "- **Local file** mode accepts audio/video plus `.txt`/`.vtt` for direct TTS.\n"
             "- Requires `ffmpeg` on PATH."
         )
 

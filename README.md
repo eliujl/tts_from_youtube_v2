@@ -15,6 +15,7 @@ A local pipeline to:
 ### Inputs
 - **YouTube** video or **playlist**
 - **Local file upload**: `.mp4/.mkv/.webm/.mov/.mp3/.wav/.m4a/.flac/.ogg/.aac`
+- **Text input for direct TTS**: `.txt/.vtt` (skips ASR)
 
 ### Modes
 - **Run (ASR + TTS)**: download/extract audio → transcribe → synthesize
@@ -105,6 +106,12 @@ y2tts download "https://youtu.be/VIDEO_ID" --out downloads --kind audio
 y2tts local "C:\path\to\video.mp4" --out out --model distil-large-v3 --tts piper --mp3
 ```
 
+### 5) Text file to speech (no ASR)
+```bash
+y2tts local "C:\path\to\script.txt" --out out --tts piper --mp3
+y2tts local "C:\path\to\captions.vtt" --out out --tts piper
+```
+
 ---
 
 ## Web UI (Gradio)
@@ -124,6 +131,7 @@ Open:
 
 UI supports:
 - **YouTube** URL or **Local file** upload
+- Local file accepts audio/video and `.txt/.vtt` for direct TTS
 - Task selection: **Run / Transcribe only / Download only (YouTube)**
 - ASR controls: model/device/VAD/language/word timestamps
 - TTS controls: Piper/Coqui/none, mp3 output
