@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import gradio as gr
 
 from .pipeline import RunConfig, download_only, run_local_file, run_many
 
 
-def _coerce_file_path(v: Any) -> Optional[str]:
+def _coerce_file_path(v: Any) -> str | None:
     """Gradio 4/5 may return str, dict, or FileData-like objects for File components."""
     if v is None:
         return None

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -27,7 +26,7 @@ def transcribe(
     out: Path = typer.Option(Path("out"), "--out", "-o", help="Output directory"),
     model: str = typer.Option("distil-large-v3", "--model", help="faster-whisper model name"),
     device: str = typer.Option("auto", "--device", help="auto|cpu|cuda"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Language code, e.g. en. Default=auto."),
+    lang: str | None = typer.Option(None, "--lang", help="Language code, e.g. en. Default=auto."),
     vad: bool = typer.Option(True, "--vad/--no-vad", help="Enable Silero VAD filter"),
     word_ts: bool = typer.Option(False, "--word-ts", help="Include word-level timestamps (slower)"),
 ):
@@ -53,19 +52,19 @@ def run(
     asr: str = typer.Option("faster-whisper", "--asr", help="ASR backend (currently: faster-whisper)"),
     model: str = typer.Option("distil-large-v3", "--model", help="faster-whisper model name"),
     device: str = typer.Option("auto", "--device", help="auto|cpu|cuda"),
-    compute_type: Optional[str] = typer.Option(None, "--compute-type", help="e.g. float16, int8, int8_float16"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Language code, e.g. en. Default=auto."),
+    compute_type: str | None = typer.Option(None, "--compute-type", help="e.g. float16, int8, int8_float16"),
+    lang: str | None = typer.Option(None, "--lang", help="Language code, e.g. en. Default=auto."),
     vad: bool = typer.Option(True, "--vad/--no-vad", help="Enable Silero VAD filter"),
     word_ts: bool = typer.Option(False, "--word-ts", help="Include word-level timestamps (slower)"),
     # TTS
     tts: str = typer.Option("piper", "--tts", help="piper|coqui|none"),
     mp3: bool = typer.Option(False, "--mp3", help="Also create mp3 output (requires ffmpeg + libmp3lame)"),
     piper_voice: str = typer.Option("en_US-lessac-medium", "--piper-voice", help="Piper voice name"),
-    piper_data_dir: Optional[Path] = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
+    piper_data_dir: Path | None = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
     piper_cuda: bool = typer.Option(False, "--piper-cuda", help="Use Piper CUDA (requires onnxruntime-gpu)"),
     coqui_model: str = typer.Option("tts_models/en/jenny/jenny", "--coqui-model", help="Coqui model name"),
-    coqui_speaker_wav: Optional[Path] = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
-    coqui_language: Optional[str] = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
+    coqui_speaker_wav: Path | None = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
+    coqui_language: str | None = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
 ):
     cfg = RunConfig(
         out_dir=out,
@@ -119,18 +118,18 @@ def local(
     out: Path = typer.Option(Path("out"), "--out", "-o", help="Output directory"),
     model: str = typer.Option("distil-large-v3", "--model", help="faster-whisper model name"),
     device: str = typer.Option("auto", "--device", help="auto|cpu|cuda"),
-    compute_type: Optional[str] = typer.Option(None, "--compute-type", help="e.g. float16, int8, int8_float16"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Language code, e.g. en. Default=auto."),
+    compute_type: str | None = typer.Option(None, "--compute-type", help="e.g. float16, int8, int8_float16"),
+    lang: str | None = typer.Option(None, "--lang", help="Language code, e.g. en. Default=auto."),
     vad: bool = typer.Option(True, "--vad/--no-vad", help="Enable Silero VAD filter"),
     word_ts: bool = typer.Option(False, "--word-ts", help="Include word-level timestamps (slower)"),
     tts: str = typer.Option("piper", "--tts", help="piper|coqui|none"),
     mp3: bool = typer.Option(False, "--mp3", help="Also create mp3 output (requires ffmpeg + libmp3lame)"),
     piper_voice: str = typer.Option("en_US-lessac-medium", "--piper-voice", help="Piper voice name"),
-    piper_data_dir: Optional[Path] = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
+    piper_data_dir: Path | None = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
     piper_cuda: bool = typer.Option(False, "--piper-cuda", help="Use Piper CUDA (requires onnxruntime-gpu)"),
     coqui_model: str = typer.Option("tts_models/en/jenny/jenny", "--coqui-model", help="Coqui model name"),
-    coqui_speaker_wav: Optional[Path] = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
-    coqui_language: Optional[str] = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
+    coqui_speaker_wav: Path | None = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
+    coqui_language: str | None = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
 ):
     """Run ASR/TTS on a local file (no YouTube). .txt/.vtt inputs skip ASR and run direct TTS."""
     cfg = RunConfig(

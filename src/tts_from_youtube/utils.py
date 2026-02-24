@@ -5,7 +5,6 @@ import os
 import re
 from pathlib import Path
 
-
 _INVALID_FILENAME = re.compile(r'[\\/:*?"<>|]+')
 
 

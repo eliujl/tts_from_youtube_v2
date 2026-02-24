@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass
 from pathlib import Path
-import datetime
 from typing import Any
 
 import srt

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import regex as re
 
-
 _FILLS = re.compile(
     r"\b(um+|uh+|er+|ah+|like|you\s+know|i\s+mean)\b",
     flags=re.IGNORECASE,
