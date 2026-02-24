@@ -37,6 +37,38 @@ def _coerce_dl_kind(v: Any) -> str:
     return "video"
 
 
+def _coerce_dl_audio_format(v: Any) -> str:
+    """Dropdown should be 'wav'/'mp3', but some Gradio versions can pass non-string payloads."""
+    if isinstance(v, str) and v in ("wav", "mp3"):
+        return v
+    return "wav"
+
+
+def _coerce_source_type(v: Any) -> str:
+    """Normalize source selector payload across Gradio versions."""
+    if isinstance(v, str) and v in ("YouTube", "Local file"):
+        return v
+    if isinstance(v, dict):
+        for k in ("value", "label", "name"):
+            sv = v.get(k)
+            if isinstance(sv, str) and sv in ("YouTube", "Local file"):
+                return sv
+    return "YouTube"
+
+
+def _coerce_task(v: Any) -> str:
+    """Normalize task selector payload across Gradio versions."""
+    valid = ("Run (ASR + TTS)", "Transcribe only", "Download only (YouTube)")
+    if isinstance(v, str) and v in valid:
+        return v
+    if isinstance(v, dict):
+        for k in ("value", "label", "name"):
+            tv = v.get(k)
+            if isinstance(tv, str) and tv in valid:
+                return tv
+    return "Run (ASR + TTS)"
+
+
 def _collect_artifacts(out_dirs: list[Path]) -> tuple[str, str, list[str]]:
     """
     Return: (status_text, transcript_preview, file_paths_for_download)
@@ -118,22 +150,32 @@ def _run(
     coqui_language: str,
     # Download-only options
     dl_kind: Any,
+    dl_audio_format: Any,
     progress=gr.Progress(track_tqdm=True),
 ):
     out_path = Path(out_dir).expanduser().resolve()
     out_path.mkdir(parents=True, exist_ok=True)
 
+    source_type_norm = _coerce_source_type(source_type)
+    task_norm = _coerce_task(task)
+    lf = _coerce_file_path(local_file)
     dl_kind_norm = _coerce_dl_kind(dl_kind)
+    dl_audio_format_norm = _coerce_dl_audio_format(dl_audio_format)
 
     # Download-only is YouTube-only
-    if task.startswith("Download only"):
-        if source_type != "YouTube":
+    if task_norm.startswith("Download only"):
+        if source_type_norm != "YouTube":
             raise gr.Error("Download-only is only available for YouTube sources.")
         if not youtube_url or not youtube_url.strip():
             raise gr.Error("Please provide a YouTube video or playlist URL.")
         cfg = RunConfig(out_dir=out_path, tts_backend="none", make_mp3=False)
         progress(0.05, desc="Downloading…")
-        out_dirs = download_only(youtube_url.strip(), cfg, kind=dl_kind_norm)
+        out_dirs = download_only(
+            youtube_url.strip(),
+            cfg,
+            kind=dl_kind_norm,
+            audio_format=dl_audio_format_norm,
+        )
         return _collect_artifacts(out_dirs)
 
     # ASR/TTS runs
@@ -158,22 +200,28 @@ def _run(
         coqui_language=coqui_language.strip() or None,
     )
 
-    if task == "Transcribe only":
+    if task_norm == "Transcribe only":
         cfg.tts_backend = "none"
         cfg.make_mp3 = False
 
     progress(0.05, desc="Running pipeline…")
 
-    if source_type == "YouTube":
+    # Prefer local file if one is uploaded, even if dropdown payload is malformed.
+    if source_type_norm == "Local file" or (lf and not (youtube_url or "").strip()):
+        out_dir_path = run_local_file(Path(lf), cfg) if lf else None
+        if not out_dir_path:
+            raise gr.Error("Please upload a local audio/video/text file.")
+        return _collect_artifacts([out_dir_path])
+
+    if source_type_norm == "YouTube":
         if not youtube_url or not youtube_url.strip():
             raise gr.Error("Please provide a YouTube video or playlist URL.")
         out_dirs = run_many(youtube_url.strip(), cfg)
         return _collect_artifacts(out_dirs)
 
     # Local file
-    lf = _coerce_file_path(local_file)
     if not lf:
-        raise gr.Error("Please upload a local audio/video file.")
+        raise gr.Error("Please upload a local audio/video/text file.")
     out_dir_path = run_local_file(Path(lf), cfg)
     return _collect_artifacts([out_dir_path])
 
@@ -260,7 +308,13 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 value="video",
                 allow_custom_value=True,
             )
-            gr.Markdown("- **video**: best video+audio merged (mp4 by default)\n- **audio**: best audio extracted to wav")
+            dl_audio_format = gr.Dropdown(
+                label="Audio format (for kind=audio)",
+                choices=["wav", "mp3"],
+                value="wav",
+                allow_custom_value=True,
+            )
+            gr.Markdown("- **video**: best video+audio merged (mp4 by default)\n- **audio**: best audio extracted to `wav` or `mp3`")
 
         run_btn = gr.Button("Run", variant="primary")
         status = gr.Textbox(label="Output folders", lines=4)
@@ -290,6 +344,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 coqui_speaker_wav,
                 coqui_language,
                 dl_kind,
+                dl_audio_format,
             ],
             outputs=[status, preview, downloads],
         )

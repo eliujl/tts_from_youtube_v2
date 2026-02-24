@@ -22,7 +22,7 @@ A local pipeline to:
 - **Transcribe only**: download/extract audio → transcribe
 - **Download only (YouTube)**: just download media, no ASR/TTS
   - `kind=video`: best video+audio merged (mp4 default)
-  - `kind=audio`: best audio extracted to wav
+  - `kind=audio`: best audio extracted to wav/mp3 (`--audio-format`)
 
 ### Outputs (per item)
 - `transcript.txt` — raw transcript (segment concatenation)
@@ -99,6 +99,9 @@ y2tts download "https://youtube.com/playlist?list=..." --out downloads --kind vi
 
 # Download audio-only (wav)
 y2tts download "https://youtu.be/VIDEO_ID" --out downloads --kind audio
+
+# Download audio-only (mp3)
+y2tts download "https://youtu.be/VIDEO_ID" --out downloads --kind audio --audio-format mp3
 ```
 
 ### 4) Local file (no YouTube required)

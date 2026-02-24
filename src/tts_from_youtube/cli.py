@@ -105,10 +105,11 @@ def download(
     url: str = typer.Argument(..., help="YouTube video or playlist URL"),
     out: Path = typer.Option(Path("out"), "--out", "-o", help="Output directory"),
     kind: str = typer.Option("video", "--kind", help="video|audio"),
+    audio_format: str = typer.Option("wav", "--audio-format", help="For --kind audio: wav|mp3"),
 ):
     """Download YouTube video/playlist only (no ASR/TTS)."""
     cfg = RunConfig(out_dir=out, tts_backend="none", make_mp3=False)
-    paths = download_only(url, cfg, kind=kind)
+    paths = download_only(url, cfg, kind=kind, audio_format=audio_format)
     _print_done(paths)
 
 

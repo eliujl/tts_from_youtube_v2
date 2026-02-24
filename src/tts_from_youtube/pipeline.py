@@ -230,15 +230,18 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
     return work_dir
 
 
-def download_only(url: str, cfg: RunConfig, *, kind: str = "video") -> list[Path]:
+def download_only(url: str, cfg: RunConfig, *, kind: str = "video", audio_format: str = "wav") -> list[Path]:
     """Download YouTube video/playlist without ASR/TTS.
 
     kind:
       - "video": best video+audio merged
-      - "audio": best audio as wav (uses the existing audio downloader)
+      - "audio": best audio as wav/mp3 (uses the existing audio downloader)
     """
     ensure_dir(cfg.out_dir)
     items = expand_url(url)
+    audio_fmt = audio_format.lower()
+    if audio_fmt not in {"wav", "mp3"}:
+        raise ValueError("audio_format must be 'wav' or 'mp3'")
 
     out_paths: list[Path] = []
     for item in items:
@@ -261,7 +264,7 @@ def download_only(url: str, cfg: RunConfig, *, kind: str = "video") -> list[Path
         elif kind == "audio":
             title = sanitize_filename(item.title or "audio")
             work_dir = ensure_dir(cfg.out_dir / title)
-            a = download_best_audio(item, work_dir, download_captions=False)
+            a = download_best_audio(item, work_dir, download_captions=False, preferred_codec=audio_fmt)
             _write_manifest(
                 work_dir,
                 {
@@ -269,7 +272,8 @@ def download_only(url: str, cfg: RunConfig, *, kind: str = "video") -> list[Path
                     "title": a.title,
                     "video_id": a.video_id,
                     "download_kind": "audio",
-                    "audio_wav": str(a.audio_path),
+                    "audio_format": audio_fmt,
+                    "audio_path": str(a.audio_path),
                 },
             )
             out_paths.append(work_dir)

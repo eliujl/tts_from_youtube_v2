@@ -113,9 +113,14 @@ def download_best_audio(
     *,
     download_captions: bool = True,
     captions_format: str = "vtt",
+    preferred_codec: str = "wav",
 ) -> DownloadResult:
     """Download best available audio and (optionally) captions."""
     ensure_dir(out_dir)
+
+    codec = preferred_codec.lower()
+    if codec not in {"wav", "mp3"}:
+        raise ValueError("preferred_codec must be 'wav' or 'mp3'")
 
     # Use a stable filename template to avoid collisions; include id when available.
     tmpl = "%(title)s [%(id)s].%(ext)s"
@@ -128,7 +133,7 @@ def download_best_audio(
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
-                "preferredcodec": "wav",
+                "preferredcodec": codec,
                 "preferredquality": "0",
             }
         ],
@@ -154,12 +159,11 @@ def download_best_audio(
     video_id = info.get("id") or item.id
     title_safe = sanitize_filename(title)
 
-    # After post-processing, the extension is wav.
-    # yt-dlp returns the original downloaded filename in 'requested_downloads' sometimes; we scan for wav.
-    wav_candidates = sorted(out_dir.glob(f"{title_safe}*[{video_id}]*.wav")) if video_id else []
-    if not wav_candidates:
-        wav_candidates = sorted(out_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime, reverse=True)
-    audio_path = wav_candidates[0]
+    # After post-processing, the extension matches requested codec.
+    candidates = sorted(out_dir.glob(f"{title_safe}*[{video_id}]*.{codec}")) if video_id else []
+    if not candidates:
+        candidates = sorted(out_dir.glob(f"*.{codec}"), key=lambda p: p.stat().st_mtime, reverse=True)
+    audio_path = candidates[0]
 
     captions_path = None
     if download_captions:
