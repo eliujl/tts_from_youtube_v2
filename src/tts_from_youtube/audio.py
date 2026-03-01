@@ -53,3 +53,41 @@ def normalize_for_asr(in_path: Path, out_wav_16k_mono: Path) -> None:
         str(out_wav_16k_mono),
     ]
     subprocess.run(cmd, check=True)
+
+
+def _build_atempo_chain(speed: float) -> str:
+    """Build ffmpeg atempo chain with per-stage factor constrained to [0.5, 2.0]."""
+    if speed <= 0:
+        raise ValueError("speed must be > 0.")
+
+    parts: list[str] = []
+    remaining = speed
+    while remaining < 0.5:
+        parts.append("atempo=0.5")
+        remaining /= 0.5
+    while remaining > 2.0:
+        parts.append("atempo=2.0")
+        remaining /= 2.0
+    parts.append(f"atempo={remaining:.6f}")
+    return ",".join(parts)
+
+
+def retime_wav(in_wav: Path, out_wav: Path, speed: float) -> None:
+    """Adjust speaking speed using ffmpeg atempo, preserving pitch."""
+    if speed <= 0:
+        raise ValueError("speed must be > 0.")
+    if speed == 1.0:
+        return
+
+    require_ffmpeg()
+    out_wav.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(in_wav),
+        "-filter:a",
+        _build_atempo_chain(speed),
+        str(out_wav),
+    ]
+    subprocess.run(cmd, check=True)

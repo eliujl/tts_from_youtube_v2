@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from .asr.faster_whisper_asr import Transcript, transcribe_faster_whisper
-from .audio import normalize_for_asr, wav_to_mp3
+from .audio import normalize_for_asr, retime_wav, wav_to_mp3
 from .download import DownloadResult, download_best_audio, download_video, expand_url
 from .text import basic_cleanup, load_text_input
 from .utils import ensure_dir, sanitize_filename
@@ -27,6 +27,7 @@ class RunConfig:
     asr_word_timestamps: bool = False
 
     tts_backend: TTSBackend = "piper"
+    tts_speed: float = 1.0  # 1.0=normal, <1.0 slower, >1.0 faster
     piper_voice: str = "en_US-lessac-medium"
     piper_data_dir: Path | None = None
     piper_use_cuda: bool = False
@@ -40,12 +41,24 @@ class RunConfig:
 
 
 def _write_manifest(out_dir: Path, payload: dict) -> None:
-    (out_dir / "manifest.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    manifest_path = _artifact_path(out_dir, "manifest", "json")
+    manifest_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _save_transcript(out_dir: Path, t: Transcript) -> None:
-    (out_dir / "transcript.txt").write_text(t.to_text(), encoding="utf-8")
-    (out_dir / "transcript.srt").write_text(t.to_srt(), encoding="utf-8")
+def _artifact_base(out_dir: Path) -> str:
+    return sanitize_filename(out_dir.name) or "output"
+
+
+def _artifact_path(out_dir: Path, kind: str, ext: str) -> Path:
+    return out_dir / f"{_artifact_base(out_dir)}.{kind}.{ext}"
+
+
+def _save_transcript(out_dir: Path, t: Transcript) -> dict[str, Path]:
+    transcript_txt = _artifact_path(out_dir, "transcript", "txt")
+    transcript_srt = _artifact_path(out_dir, "transcript", "srt")
+    transcript_json = _artifact_path(out_dir, "transcript", "json")
+    transcript_txt.write_text(t.to_text(), encoding="utf-8")
+    transcript_srt.write_text(t.to_srt(), encoding="utf-8")
     # JSON with segments + optional word timestamps
     data = {
         "language": t.language,
@@ -54,7 +67,12 @@ def _save_transcript(out_dir: Path, t: Transcript) -> None:
             {"start": s.start, "end": s.end, "text": s.text, "words": s.words} for s in t.segments
         ],
     }
-    (out_dir / "transcript.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    transcript_json.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {
+        "transcript": transcript_txt,
+        "transcript_srt": transcript_srt,
+        "transcript_json": transcript_json,
+    }
 
 
 def _transcribe(audio_wav: Path, cfg: RunConfig) -> Transcript:
@@ -75,7 +93,8 @@ def _synthesize(text: str, out_dir: Path, cfg: RunConfig) -> Path | None:
     if cfg.tts_backend == "none":
         return None
 
-    out_wav = out_dir / "tts.wav"
+    base_name = _artifact_base(out_dir)
+    out_wav = out_dir / f"{base_name}.wav"
 
     if cfg.tts_backend == "piper":
         from .tts.piper_tts import PiperConfig, synthesize_to_wav
@@ -87,6 +106,7 @@ def _synthesize(text: str, out_dir: Path, cfg: RunConfig) -> Path | None:
                 voice=cfg.piper_voice,
                 data_dir=cfg.piper_data_dir,
                 use_cuda=cfg.piper_use_cuda,
+                length_scale=(1.0 / cfg.tts_speed),
             ),
         )
 
@@ -102,11 +122,14 @@ def _synthesize(text: str, out_dir: Path, cfg: RunConfig) -> Path | None:
                 language=cfg.coqui_language,
             ),
         )
+        if cfg.tts_speed != 1.0:
+            # Coqui speed control is model-dependent; apply consistent post-process tempo.
+            retime_wav(out_wav, out_wav, cfg.tts_speed)
     else:
         raise ValueError(f"Unknown TTS backend: {cfg.tts_backend}")
 
     if cfg.make_mp3:
-        mp3 = out_dir / "tts.mp3"
+        mp3 = out_dir / f"{base_name}.mp3"
         wav_to_mp3(out_wav, mp3)
         return mp3
 
@@ -115,6 +138,8 @@ def _synthesize(text: str, out_dir: Path, cfg: RunConfig) -> Path | None:
 
 def run_single(url: str, cfg: RunConfig) -> Path:
     ensure_dir(cfg.out_dir)
+    if cfg.tts_speed <= 0:
+        raise ValueError("tts_speed must be > 0.")
 
     items = expand_url(url)
     if len(items) != 1:
@@ -127,14 +152,15 @@ def run_single(url: str, cfg: RunConfig) -> Path:
     dl: DownloadResult = download_best_audio(item, work_dir, download_captions=cfg.download_captions)
 
     # Optional normalization for ASR (creates normalized.wav)
-    norm_wav = work_dir / "audio_16k.wav"
+    norm_wav = _artifact_path(work_dir, "audio_16k", "wav")
     normalize_for_asr(dl.audio_path, norm_wav)
 
     t = _transcribe(norm_wav, cfg)
-    _save_transcript(work_dir, t)
+    transcript_paths = _save_transcript(work_dir, t)
 
     cleaned = basic_cleanup(t.to_text())
-    (work_dir / "transcript_clean.txt").write_text(cleaned + "\n", encoding="utf-8")
+    transcript_clean = _artifact_path(work_dir, "transcript_clean", "txt")
+    transcript_clean.write_text(cleaned + "\n", encoding="utf-8")
 
     tts_path = _synthesize(cleaned, work_dir, cfg)
 
@@ -153,7 +179,18 @@ def run_single(url: str, cfg: RunConfig) -> Path:
                 "language": t.language,
                 "language_probability": t.language_probability,
             },
-            "tts": {"backend": cfg.tts_backend, "output": str(tts_path) if tts_path else None},
+            "tts": {
+                "backend": cfg.tts_backend,
+                "speed": cfg.tts_speed,
+                "output": str(tts_path) if tts_path else None,
+            },
+            "artifacts": {
+                "audio_norm_wav": str(norm_wav),
+                "transcript": str(transcript_paths["transcript"]),
+                "transcript_clean": str(transcript_clean),
+                "transcript_srt": str(transcript_paths["transcript_srt"]),
+                "transcript_json": str(transcript_paths["transcript_json"]),
+            },
         },
     )
 
@@ -168,6 +205,8 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
     - TTS (optional)
     """
     ensure_dir(cfg.out_dir)
+    if cfg.tts_speed <= 0:
+        raise ValueError("tts_speed must be > 0.")
 
     src = Path(path).expanduser().resolve()
     if not src.exists():
@@ -182,9 +221,11 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
         if not raw_text:
             raise ValueError(f"No usable text found in input file: {src}")
 
-        (work_dir / "transcript.txt").write_text(raw_text + "\n", encoding="utf-8")
+        transcript_txt = _artifact_path(work_dir, "transcript", "txt")
+        transcript_txt.write_text(raw_text + "\n", encoding="utf-8")
         cleaned = basic_cleanup(raw_text)
-        (work_dir / "transcript_clean.txt").write_text(cleaned + "\n", encoding="utf-8")
+        transcript_clean = _artifact_path(work_dir, "transcript_clean", "txt")
+        transcript_clean.write_text(cleaned + "\n", encoding="utf-8")
         tts_path = _synthesize(cleaned, work_dir, cfg)
 
         _write_manifest(
@@ -193,20 +234,29 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
                 "source_file": str(src),
                 "title": title,
                 "input_kind": "text",
-                "tts": {"backend": cfg.tts_backend, "output": str(tts_path) if tts_path else None},
+                "tts": {
+                    "backend": cfg.tts_backend,
+                    "speed": cfg.tts_speed,
+                    "output": str(tts_path) if tts_path else None,
+                },
+                "artifacts": {
+                    "transcript": str(transcript_txt),
+                    "transcript_clean": str(transcript_clean),
+                },
             },
         )
         return work_dir
 
     # Normalize/extract audio for ASR
-    norm_wav = work_dir / "audio_16k.wav"
+    norm_wav = _artifact_path(work_dir, "audio_16k", "wav")
     normalize_for_asr(src, norm_wav)
 
     t = _transcribe(norm_wav, cfg)
-    _save_transcript(work_dir, t)
+    transcript_paths = _save_transcript(work_dir, t)
 
     cleaned = basic_cleanup(t.to_text())
-    (work_dir / "transcript_clean.txt").write_text(cleaned + "\n", encoding="utf-8")
+    transcript_clean = _artifact_path(work_dir, "transcript_clean", "txt")
+    transcript_clean.write_text(cleaned + "\n", encoding="utf-8")
 
     tts_path = _synthesize(cleaned, work_dir, cfg)
 
@@ -222,7 +272,18 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
                 "language": t.language,
                 "language_probability": t.language_probability,
             },
-            "tts": {"backend": cfg.tts_backend, "output": str(tts_path) if tts_path else None},
+            "tts": {
+                "backend": cfg.tts_backend,
+                "speed": cfg.tts_speed,
+                "output": str(tts_path) if tts_path else None,
+            },
+            "artifacts": {
+                "audio_norm_wav": str(norm_wav),
+                "transcript": str(transcript_paths["transcript"]),
+                "transcript_clean": str(transcript_clean),
+                "transcript_srt": str(transcript_paths["transcript_srt"]),
+                "transcript_json": str(transcript_paths["transcript_json"]),
+            },
         },
     )
 

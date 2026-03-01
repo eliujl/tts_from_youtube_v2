@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -77,15 +78,13 @@ def _collect_artifacts(out_dirs: list[Path]) -> tuple[str, str, list[str]]:
     files: list[Path] = []
     summary_lines: list[str] = []
 
-    # standard artifacts
+    # Standard artifacts (legacy naming)
     std_names = [
         "transcript.txt",
         "transcript_clean.txt",
         "transcript.srt",
         "transcript.json",
         "manifest.json",
-        "tts.wav",
-        "tts.mp3",
     ]
 
     media_exts = {".mp4", ".mkv", ".webm", ".mov", ".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
@@ -93,11 +92,37 @@ def _collect_artifacts(out_dirs: list[Path]) -> tuple[str, str, list[str]]:
     for d in out_dirs:
         summary_lines.append(str(d))
 
-        # Standard files (if present)
+        # Legacy standard files (if present)
         for name in std_names:
             p = d / name
             if p.exists():
                 files.append(p)
+
+        # New/legacy manifest(s) drive artifact discovery.
+        manifest_paths: list[Path] = []
+        legacy_manifest = d / "manifest.json"
+        if legacy_manifest.exists():
+            manifest_paths.append(legacy_manifest)
+        manifest_paths.extend(sorted(d.glob("*.manifest.json")))
+
+        for m in manifest_paths:
+            files.append(m)
+            try:
+                payload = json.loads(m.read_text(encoding="utf-8"))
+                artifacts = payload.get("artifacts", {})
+                if isinstance(artifacts, dict):
+                    for v in artifacts.values():
+                        if isinstance(v, str) and v.strip():
+                            p = Path(v)
+                            if p.exists():
+                                files.append(p)
+                tts_out = payload.get("tts", {}).get("output")
+                if isinstance(tts_out, str) and tts_out.strip():
+                    p = Path(tts_out)
+                    if p.exists():
+                        files.append(p)
+            except Exception:
+                pass
 
         # If this looks like download-only, include media files in the folder too
         for p in sorted(d.glob("*")):
@@ -115,12 +140,31 @@ def _collect_artifacts(out_dirs: list[Path]) -> tuple[str, str, list[str]]:
     # Preview latest cleaned transcript if present
     preview = ""
     for d in reversed(out_dirs):
-        p = d / "transcript_clean.txt"
-        if p.exists():
+        candidates: list[Path] = []
+        candidates.append(d / "transcript_clean.txt")  # legacy
+        candidates.extend(sorted(d.glob("*.transcript_clean.txt")))
+        manifests = []
+        if (d / "manifest.json").exists():
+            manifests.append(d / "manifest.json")
+        manifests.extend(sorted(d.glob("*.manifest.json")))
+        for m in manifests:
             try:
-                preview = p.read_text(encoding="utf-8")
+                payload = json.loads(m.read_text(encoding="utf-8"))
+                p_str = payload.get("artifacts", {}).get("transcript_clean")
+                if isinstance(p_str, str) and p_str.strip():
+                    candidates.insert(0, Path(p_str))
             except Exception:
-                preview = ""
+                pass
+
+        for p in candidates:
+            if p.exists():
+                try:
+                    preview = p.read_text(encoding="utf-8")
+                except Exception:
+                    preview = ""
+                if preview:
+                    break
+        if preview:
             break
 
     return "\n".join(summary_lines), preview, [str(p) for p in uniq]
@@ -141,6 +185,7 @@ def _run(
     word_ts: bool,
     # TTS
     tts: str,
+    tts_speed: float,
     mp3: bool,
     piper_voice: str,
     piper_data_dir: str,
@@ -192,6 +237,7 @@ def _run(
         asr_vad=vad,
         asr_word_timestamps=word_ts,
         tts_backend=tts,  # type: ignore[arg-type]
+        tts_speed=tts_speed,
         make_mp3=mp3,
         piper_voice=piper_voice,
         piper_data_dir=Path(piper_data_dir).expanduser().resolve() if piper_data_dir.strip() else None,
@@ -331,6 +377,14 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     value="piper",
                     info="Set to 'none' for transcription-only output.",
                 )
+                tts_speed = gr.Slider(
+                    label="Speech rate",
+                    minimum=0.5,
+                    maximum=2.0,
+                    value=1.0,
+                    step=0.05,
+                    info="1.0=normal, <1.0 slower, >1.0 faster.",
+                )
                 mp3 = gr.Checkbox(label="Also output mp3", value=False, info="Creates `tts.mp3` in addition to wav.")
 
             with gr.Accordion("Piper", open=False):
@@ -395,6 +449,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 vad,
                 word_ts,
                 tts,
+                tts_speed,
                 mp3,
                 piper_voice,
                 piper_data_dir,

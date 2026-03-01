@@ -8,7 +8,7 @@ from rich.table import Table
 
 from .pipeline import RunConfig, download_only, run_local_file, run_many
 
-app = typer.Typer(add_completion=False, help="Download YouTube audio → transcribe → resynthesize (local ASR/TTS).")
+app = typer.Typer(add_completion=False, help="Download YouTube audio -> transcribe -> resynthesize (local ASR/TTS).")
 console = Console()
 
 
@@ -58,6 +58,7 @@ def run(
     word_ts: bool = typer.Option(False, "--word-ts", help="Include word-level timestamps (slower)"),
     # TTS
     tts: str = typer.Option("piper", "--tts", help="piper|coqui|none"),
+    tts_speed: float = typer.Option(1.0, "--tts-speed", help="Speech rate multiplier: 1.0=normal, <1 slower, >1 faster"),
     mp3: bool = typer.Option(False, "--mp3", help="Also create mp3 output (requires ffmpeg + libmp3lame)"),
     piper_voice: str = typer.Option("en_US-lessac-medium", "--piper-voice", help="Piper voice name"),
     piper_data_dir: Path | None = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
@@ -76,6 +77,7 @@ def run(
         asr_vad=vad,
         asr_word_timestamps=word_ts,
         tts_backend=tts,  # type: ignore[arg-type]
+        tts_speed=tts_speed,
         make_mp3=mp3,
         piper_voice=piper_voice,
         piper_data_dir=piper_data_dir,
@@ -123,6 +125,7 @@ def local(
     vad: bool = typer.Option(True, "--vad/--no-vad", help="Enable Silero VAD filter"),
     word_ts: bool = typer.Option(False, "--word-ts", help="Include word-level timestamps (slower)"),
     tts: str = typer.Option("piper", "--tts", help="piper|coqui|none"),
+    tts_speed: float = typer.Option(1.0, "--tts-speed", help="Speech rate multiplier: 1.0=normal, <1 slower, >1 faster"),
     mp3: bool = typer.Option(False, "--mp3", help="Also create mp3 output (requires ffmpeg + libmp3lame)"),
     piper_voice: str = typer.Option("en_US-lessac-medium", "--piper-voice", help="Piper voice name"),
     piper_data_dir: Path | None = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
@@ -141,6 +144,7 @@ def local(
         asr_vad=vad,
         asr_word_timestamps=word_ts,
         tts_backend=tts,  # type: ignore[arg-type]
+        tts_speed=tts_speed,
         make_mp3=mp3,
         piper_voice=piper_voice,
         piper_data_dir=piper_data_dir,

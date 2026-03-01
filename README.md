@@ -25,12 +25,13 @@ A local pipeline to:
   - `kind=audio`: best audio extracted to wav/mp3 (`--audio-format`)
 
 ### Outputs (per item)
-- `transcript.txt` — raw transcript (segment concatenation)
-- `transcript_clean.txt` — basic cleanup
-- `transcript.srt` — subtitles (segment-level)
-- `transcript.json` — segments + optional word timestamps
-- `manifest.json` — run metadata
-- `tts.wav` (and optional `tts.mp3`)
+- `<title>.transcript.txt` — raw transcript (segment concatenation)
+- `<title>.transcript_clean.txt` — basic cleanup
+- `<title>.transcript.srt` — subtitles (segment-level)
+- `<title>.transcript.json` — segments + optional word timestamps
+- `<title>.manifest.json` — run metadata
+- `<title>.audio_16k.wav` — normalized ASR input audio
+- `<title>.wav` (and optional `<title>.mp3`) — synthesized TTS output
 
 ---
 
@@ -84,7 +85,8 @@ pip install -e ".[ui,asr,tts_piper]"
 ```bash
 y2tts run "https://youtu.be/VIDEO_ID" --out out --mp3 \
   --model distil-large-v3 --vad \
-  --tts piper --piper-voice en_US-lessac-medium
+  --tts piper --piper-voice en_US-lessac-medium \
+  --tts-speed 0.9
 ```
 
 ### 2) Transcribe only (YouTube or playlist)
@@ -107,6 +109,8 @@ y2tts download "https://youtu.be/VIDEO_ID" --out downloads --kind audio --audio-
 ### 4) Local file (no YouTube required)
 ```bash
 y2tts local "C:\path\to\video.mp4" --out out --model distil-large-v3 --tts piper --mp3
+# slower speech
+y2tts local "C:\path\to\video.mp4" --out out --model distil-large-v3 --tts piper --tts-speed 0.85
 ```
 
 ### 5) Text file to speech (no ASR)
@@ -138,6 +142,7 @@ UI supports:
 - Task selection: **Run / Transcribe only / Download only (YouTube)**
 - ASR controls: model/device/VAD/language/word timestamps
 - TTS controls: Piper/Coqui/none, mp3 output
+- TTS speed control (`1.0` normal, `<1` slower, `>1` faster)
 
 ---
 
