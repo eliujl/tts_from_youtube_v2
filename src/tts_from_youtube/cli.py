@@ -57,12 +57,49 @@ def run(
     vad: bool = typer.Option(True, "--vad/--no-vad", help="Enable Silero VAD filter"),
     word_ts: bool = typer.Option(False, "--word-ts", help="Include word-level timestamps (slower)"),
     # TTS
-    tts: str = typer.Option("piper", "--tts", help="piper|coqui|none"),
+    tts: str = typer.Option("piper", "--tts", help="piper|microsoft|coqui|none"),
     tts_speed: float = typer.Option(1.0, "--tts-speed", help="Speech rate multiplier: 1.0=normal, <1 slower, >1 faster"),
+    preserve_paragraph_breaks: bool = typer.Option(
+        False,
+        "--preserve-paragraph-breaks/--no-preserve-paragraph-breaks",
+        help="Keep paragraph breaks in cleaned transcript for more natural TTS pauses.",
+    ),
+    polish: str = typer.Option(
+        "none", "--polish", help="AI polish backend: none|ollama|openai-compatible"
+    ),
+    polish_model: str = typer.Option("", "--polish-model", help="Model used for AI polishing"),
+    polish_base_url: str = typer.Option(
+        "", "--polish-base-url", help="API base URL; Ollama defaults to localhost:11434"
+    ),
+    polish_api_key_env: str = typer.Option(
+        "OPENAI_API_KEY", "--polish-api-key-env", help="Environment variable containing API key"
+    ),
+    polish_glossary: Path | None = typer.Option(
+        None, "--polish-glossary", help="Optional UTF-8 terminology glossary"
+    ),
+    polish_chunk_chars: int = typer.Option(
+        8000, "--polish-chunk-chars", help="Maximum source characters per polish request"
+    ),
+    polish_timeout: int = typer.Option(
+        600, "--polish-timeout", help="Timeout in seconds for each polish request"
+    ),
+    ollama_num_gpu: int | None = typer.Option(
+        None,
+        "--ollama-num-gpu",
+        help="Ollama GPU layers; use 0 for CPU-only stability on older GPUs",
+    ),
+    allow_online_polish: bool = typer.Option(
+        False,
+        "--allow-online-polish",
+        help="Allow transcript text to be sent to a non-local polish endpoint",
+    ),
     mp3: bool = typer.Option(False, "--mp3", help="Also create mp3 output (requires ffmpeg + libmp3lame)"),
     piper_voice: str = typer.Option("en_US-lessac-medium", "--piper-voice", help="Piper voice name"),
     piper_data_dir: Path | None = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
     piper_cuda: bool = typer.Option(False, "--piper-cuda", help="Use Piper CUDA (requires onnxruntime-gpu)"),
+    microsoft_voice: str = typer.Option(
+        "en-US-MichelleNeural", "--microsoft-voice", help="Microsoft Edge neural voice"
+    ),
     coqui_model: str = typer.Option("tts_models/en/jenny/jenny", "--coqui-model", help="Coqui model name"),
     coqui_speaker_wav: Path | None = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
     coqui_language: str | None = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
@@ -78,10 +115,21 @@ def run(
         asr_word_timestamps=word_ts,
         tts_backend=tts,  # type: ignore[arg-type]
         tts_speed=tts_speed,
+        preserve_paragraph_breaks=preserve_paragraph_breaks,
+        polish_backend=polish,  # type: ignore[arg-type]
+        polish_model=polish_model,
+        polish_base_url=polish_base_url,
+        polish_api_key_env=polish_api_key_env,
+        polish_glossary_path=polish_glossary,
+        polish_chunk_chars=polish_chunk_chars,
+        polish_timeout_seconds=polish_timeout,
+        polish_allow_remote=allow_online_polish,
+        polish_ollama_num_gpu=ollama_num_gpu,
         make_mp3=mp3,
         piper_voice=piper_voice,
         piper_data_dir=piper_data_dir,
         piper_use_cuda=piper_cuda,
+        microsoft_voice=microsoft_voice,
         coqui_model=coqui_model,
         coqui_speaker_wav=coqui_speaker_wav,
         coqui_language=coqui_language,
@@ -124,12 +172,49 @@ def local(
     lang: str | None = typer.Option(None, "--lang", help="Language code, e.g. en. Default=auto."),
     vad: bool = typer.Option(True, "--vad/--no-vad", help="Enable Silero VAD filter"),
     word_ts: bool = typer.Option(False, "--word-ts", help="Include word-level timestamps (slower)"),
-    tts: str = typer.Option("piper", "--tts", help="piper|coqui|none"),
+    tts: str = typer.Option("piper", "--tts", help="piper|microsoft|coqui|none"),
     tts_speed: float = typer.Option(1.0, "--tts-speed", help="Speech rate multiplier: 1.0=normal, <1 slower, >1 faster"),
+    preserve_paragraph_breaks: bool = typer.Option(
+        False,
+        "--preserve-paragraph-breaks/--no-preserve-paragraph-breaks",
+        help="Keep paragraph breaks in cleaned transcript for more natural TTS pauses.",
+    ),
+    polish: str = typer.Option(
+        "none", "--polish", help="AI polish backend: none|ollama|openai-compatible"
+    ),
+    polish_model: str = typer.Option("", "--polish-model", help="Model used for AI polishing"),
+    polish_base_url: str = typer.Option(
+        "", "--polish-base-url", help="API base URL; Ollama defaults to localhost:11434"
+    ),
+    polish_api_key_env: str = typer.Option(
+        "OPENAI_API_KEY", "--polish-api-key-env", help="Environment variable containing API key"
+    ),
+    polish_glossary: Path | None = typer.Option(
+        None, "--polish-glossary", help="Optional UTF-8 terminology glossary"
+    ),
+    polish_chunk_chars: int = typer.Option(
+        8000, "--polish-chunk-chars", help="Maximum source characters per polish request"
+    ),
+    polish_timeout: int = typer.Option(
+        600, "--polish-timeout", help="Timeout in seconds for each polish request"
+    ),
+    ollama_num_gpu: int | None = typer.Option(
+        None,
+        "--ollama-num-gpu",
+        help="Ollama GPU layers; use 0 for CPU-only stability on older GPUs",
+    ),
+    allow_online_polish: bool = typer.Option(
+        False,
+        "--allow-online-polish",
+        help="Allow transcript text to be sent to a non-local polish endpoint",
+    ),
     mp3: bool = typer.Option(False, "--mp3", help="Also create mp3 output (requires ffmpeg + libmp3lame)"),
     piper_voice: str = typer.Option("en_US-lessac-medium", "--piper-voice", help="Piper voice name"),
     piper_data_dir: Path | None = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
     piper_cuda: bool = typer.Option(False, "--piper-cuda", help="Use Piper CUDA (requires onnxruntime-gpu)"),
+    microsoft_voice: str = typer.Option(
+        "en-US-MichelleNeural", "--microsoft-voice", help="Microsoft Edge neural voice"
+    ),
     coqui_model: str = typer.Option("tts_models/en/jenny/jenny", "--coqui-model", help="Coqui model name"),
     coqui_speaker_wav: Path | None = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
     coqui_language: str | None = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
@@ -145,10 +230,21 @@ def local(
         asr_word_timestamps=word_ts,
         tts_backend=tts,  # type: ignore[arg-type]
         tts_speed=tts_speed,
+        preserve_paragraph_breaks=preserve_paragraph_breaks,
+        polish_backend=polish,  # type: ignore[arg-type]
+        polish_model=polish_model,
+        polish_base_url=polish_base_url,
+        polish_api_key_env=polish_api_key_env,
+        polish_glossary_path=polish_glossary,
+        polish_chunk_chars=polish_chunk_chars,
+        polish_timeout_seconds=polish_timeout,
+        polish_allow_remote=allow_online_polish,
+        polish_ollama_num_gpu=ollama_num_gpu,
         make_mp3=mp3,
         piper_voice=piper_voice,
         piper_data_dir=piper_data_dir,
         piper_use_cuda=piper_cuda,
+        microsoft_voice=microsoft_voice,
         coqui_model=coqui_model,
         coqui_speaker_wav=coqui_speaker_wav,
         coqui_language=coqui_language,

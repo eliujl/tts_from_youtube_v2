@@ -45,6 +45,20 @@ Thumbs.db
 # Logs
 *.log
 
+# Local notes / handoff
+LOCAL_SUMMARY.md
+.agents/
+.codex/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.local.toml
+*.local.yaml
+*.local.yml
+*.local.json
+
 # --- Project outputs (recommended to ignore) ---
 out/
 outputs/
@@ -52,3 +66,10 @@ downloads/
 voices/
 *.onnx
 *.onnx_data
+
+# Downloaded TTS runtimes, voice models, and generated experiments
+.edge_tts_packages/
+.tts_edge_runtime/
+piper_voices/
+tts_polished_audio*/
+tts_polished_samples/

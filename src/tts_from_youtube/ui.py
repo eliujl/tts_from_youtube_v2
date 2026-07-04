@@ -7,6 +7,7 @@ from typing import Any
 import gradio as gr
 
 from .pipeline import RunConfig, download_only, run_local_file, run_many
+from .polish import list_ollama_models
 
 
 def _coerce_file_path(v: Any) -> str | None:
@@ -137,10 +138,12 @@ def _collect_artifacts(out_dirs: list[Path]) -> tuple[str, str, list[str]]:
             uniq.append(f)
             seen.add(f)
 
-    # Preview latest cleaned transcript if present
+    # Preview the polished TTS transcript when available, otherwise basic-clean text.
     preview = ""
     for d in reversed(out_dirs):
         candidates: list[Path] = []
+        candidates.append(d / "transcript_tts.txt")  # legacy
+        candidates.extend(sorted(d.glob("*.transcript_tts.txt")))
         candidates.append(d / "transcript_clean.txt")  # legacy
         candidates.extend(sorted(d.glob("*.transcript_clean.txt")))
         manifests = []
@@ -150,9 +153,13 @@ def _collect_artifacts(out_dirs: list[Path]) -> tuple[str, str, list[str]]:
         for m in manifests:
             try:
                 payload = json.loads(m.read_text(encoding="utf-8"))
-                p_str = payload.get("artifacts", {}).get("transcript_clean")
-                if isinstance(p_str, str) and p_str.strip():
-                    candidates.insert(0, Path(p_str))
+                artifacts = payload.get("artifacts", {})
+                clean_str = artifacts.get("transcript_clean")
+                polish_str = artifacts.get("transcript_tts")
+                if isinstance(clean_str, str) and clean_str.strip():
+                    candidates.insert(0, Path(clean_str))
+                if isinstance(polish_str, str) and polish_str.strip():
+                    candidates.insert(0, Path(polish_str))
             except Exception:
                 pass
 
@@ -183,13 +190,25 @@ def _run(
     lang: str,
     vad: bool,
     word_ts: bool,
+    # AI polish
+    polish_backend: str,
+    polish_model: str,
+    polish_base_url: str,
+    polish_api_key_env: str,
+    polish_glossary: Any,
+    polish_chunk_chars: int,
+    polish_timeout: int,
+    ollama_num_gpu: int,
+    allow_online_polish: bool,
     # TTS
     tts: str,
     tts_speed: float,
+    preserve_paragraph_breaks: bool,
     mp3: bool,
     piper_voice: str,
     piper_data_dir: str,
     piper_cuda: bool,
+    microsoft_voice: str,
     coqui_model: str,
     coqui_speaker_wav: Any,
     coqui_language: str,
@@ -236,12 +255,27 @@ def _run(
         asr_language=lang.strip() or None,
         asr_vad=vad,
         asr_word_timestamps=word_ts,
+        polish_backend=polish_backend,  # type: ignore[arg-type]
+        polish_model=(polish_model or "").strip(),
+        polish_base_url=polish_base_url.strip(),
+        polish_api_key_env=polish_api_key_env.strip(),
+        polish_glossary_path=(
+            Path(_coerce_file_path(polish_glossary)).expanduser().resolve()
+            if _coerce_file_path(polish_glossary)
+            else None
+        ),
+        polish_chunk_chars=int(polish_chunk_chars),
+        polish_timeout_seconds=int(polish_timeout),
+        polish_ollama_num_gpu=(int(ollama_num_gpu) if int(ollama_num_gpu) >= 0 else None),
+        polish_allow_remote=allow_online_polish,
         tts_backend=tts,  # type: ignore[arg-type]
         tts_speed=tts_speed,
+        preserve_paragraph_breaks=preserve_paragraph_breaks,
         make_mp3=mp3,
         piper_voice=piper_voice,
         piper_data_dir=Path(piper_data_dir).expanduser().resolve() if piper_data_dir.strip() else None,
         piper_use_cuda=piper_cuda,
+        microsoft_voice=microsoft_voice,
         coqui_model=coqui_model,
         coqui_speaker_wav=Path(_coerce_file_path(coqui_speaker_wav)).expanduser().resolve()
         if _coerce_file_path(coqui_speaker_wav)
@@ -276,6 +310,9 @@ def _run(
 
 
 def build_app(default_out: str = "out") -> gr.Blocks:
+    ollama_models = list_ollama_models()
+    default_polish_model = ollama_models[0] if ollama_models else ""
+
     with gr.Blocks(title="y2tts — YouTube/Local → ASR → TTS") as demo:
         gr.Markdown(
             "## y2tts\n"
@@ -369,11 +406,72 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 vad = gr.Checkbox(label="VAD filter", value=True, info="Helps remove long silence/noise.")
                 word_ts = gr.Checkbox(label="Word timestamps (slower)", value=False, info="Needed only for word-level timing.")
 
-        with gr.Accordion("4) TTS Settings", open=True):
+        with gr.Accordion("4) AI Polish (optional)", open=False):
+            gr.Markdown(
+                "Polishing creates a separate `transcript_tts.txt`; the original and basic-clean "
+                "transcripts remain unchanged. Ollama stays local. Other endpoints may receive "
+                "private transcript text."
+            )
+            with gr.Row():
+                polish_backend = gr.Dropdown(
+                    label="Polish backend",
+                    choices=["none", "ollama", "openai-compatible"],
+                    value="none",
+                    info="Use Ollama for offline polishing or a compatible API endpoint.",
+                )
+                polish_model = gr.Dropdown(
+                    label="Polish model",
+                    choices=ollama_models,
+                    value=default_polish_model,
+                    allow_custom_value=True,
+                    info="Installed Ollama models are detected automatically; custom API model names are also allowed.",
+                )
+            with gr.Row():
+                polish_base_url = gr.Textbox(
+                    label="API base URL",
+                    value="",
+                    placeholder="Ollama default: http://127.0.0.1:11434",
+                    info="Leave empty for Ollama's local default.",
+                )
+                polish_api_key_env = gr.Textbox(
+                    label="API key environment variable",
+                    value="OPENAI_API_KEY",
+                    info="The UI reads the key from this environment variable; never paste a key here.",
+                )
+            with gr.Row():
+                polish_glossary = gr.File(
+                    label="Terminology glossary (optional)",
+                    file_types=[".txt", ".md"],
+                    type="filepath",
+                )
+                polish_chunk_chars = gr.Number(
+                    label="Characters per polish request",
+                    value=8000,
+                    precision=0,
+                    info="Smaller chunks use less model context but may reduce continuity.",
+                )
+                polish_timeout = gr.Number(
+                    label="Per-request timeout (seconds)",
+                    value=600,
+                    precision=0,
+                )
+                ollama_num_gpu = gr.Number(
+                    label="Ollama GPU layers",
+                    value=0,
+                    precision=0,
+                    info="Use 0 for CPU-only stability; use -1 for Ollama automatic selection.",
+                )
+            allow_online_polish = gr.Checkbox(
+                label="Allow online AI polishing",
+                value=False,
+                info="Required for non-local endpoints because transcript chunks will leave this computer.",
+            )
+
+        with gr.Accordion("5) TTS Settings", open=True):
             with gr.Row():
                 tts = gr.Dropdown(
                     label="Backend",
-                    choices=["piper", "coqui", "none"],
+                    choices=["piper", "microsoft", "coqui", "none"],
                     value="piper",
                     info="Set to 'none' for transcription-only output.",
                 )
@@ -384,6 +482,11 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     value=1.0,
                     step=0.05,
                     info="1.0=normal, <1.0 slower, >1.0 faster.",
+                )
+                preserve_paragraph_breaks = gr.Checkbox(
+                    label="Preserve paragraph breaks",
+                    value=False,
+                    info="Keeps paragraph pauses in cleaned transcript for TTS pacing.",
                 )
                 mp3 = gr.Checkbox(label="Also output mp3", value=False, info="Creates `tts.mp3` in addition to wav.")
 
@@ -396,6 +499,13 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     info="Directory containing local Piper voice models.",
                 )
                 piper_cuda = gr.Checkbox(label="Use Piper CUDA (requires onnxruntime-gpu)", value=False)
+
+            with gr.Accordion("Microsoft Edge Neural (online)", open=False):
+                microsoft_voice = gr.Textbox(
+                    label="Voice",
+                    value="en-US-MichelleNeural",
+                    info="Online Microsoft neural voice, matching OpenClaw's Microsoft provider.",
+                )
 
             with gr.Accordion("Coqui", open=False):
                 coqui_model = gr.Textbox(
@@ -410,7 +520,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 )
                 coqui_language = gr.Textbox(label="Language (optional, needed for some multilingual models)", value="")
 
-        with gr.Accordion("5) Download-Only Options (YouTube)", open=False):
+        with gr.Accordion("6) Download-Only Options (YouTube)", open=False):
             # allow_custom_value avoids Gradio raising if it receives an unexpected payload
             # (some versions can send non-string values under certain UI states).
             dl_kind = gr.Dropdown(
@@ -431,7 +541,11 @@ def build_app(default_out: str = "out") -> gr.Blocks:
 
         run_btn = gr.Button("Run Pipeline", variant="primary")
         status = gr.Textbox(label="Result folders", lines=4)
-        preview = gr.Textbox(label="Transcript preview (cleaned)", lines=12, info="Shows latest cleaned transcript if available.")
+        preview = gr.Textbox(
+            label="Transcript preview",
+            lines=12,
+            info="Shows the AI-polished transcript when available, otherwise the basic-clean text.",
+        )
         downloads = gr.Files(label="Artifacts", file_count="multiple")
 
         run_btn.click(
@@ -448,12 +562,23 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 lang,
                 vad,
                 word_ts,
+                polish_backend,
+                polish_model,
+                polish_base_url,
+                polish_api_key_env,
+                polish_glossary,
+                polish_chunk_chars,
+                polish_timeout,
+                ollama_num_gpu,
+                allow_online_polish,
                 tts,
                 tts_speed,
+                preserve_paragraph_breaks,
                 mp3,
                 piper_voice,
                 piper_data_dir,
                 piper_cuda,
+                microsoft_voice,
                 coqui_model,
                 coqui_speaker_wav,
                 coqui_language,
@@ -467,6 +592,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
             "### Notes\n"
             "- **Download only (YouTube)** skips ASR/TTS and just downloads media.\n"
             "- **Local file** mode accepts audio/video plus `.txt`/`.vtt` for direct TTS.\n"
+            "- **Ollama polish** stays on localhost; online-compatible endpoints require explicit consent.\n"
             "- Requires `ffmpeg` on PATH."
         )
 

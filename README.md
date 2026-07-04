@@ -3,8 +3,9 @@
 A local pipeline to:
 - **Download** YouTube videos/playlists (or use a **local video/audio file**)
 - **Transcribe** with **faster-whisper**
-- Optionally **re-synthesize** clean speech with **Piper** (default) or **Coqui TTS**
-- Export artifacts: `transcript.txt`, `transcript_clean.txt`, `transcript.srt`, `transcript.json`, `manifest.json`, and `tts.wav` / `tts.mp3`
+- Optionally **polish messy transcripts with AI**, either locally through Ollama or through an explicitly approved compatible endpoint
+- Optionally **re-synthesize** clean speech with **Piper** (default), **Microsoft Edge Neural TTS**, or **Coqui TTS**
+- Export raw, basic-clean, optional AI-polished, subtitle, manifest, and TTS artifacts
 
 > This project is intended to run **locally**. For best results, install it in a **dedicated virtual environment** to avoid dependency conflicts with your existing Python stack.
 
@@ -20,6 +21,7 @@ A local pipeline to:
 ### Modes
 - **Run (ASR + TTS)**: download/extract audio → transcribe → synthesize
 - **Transcribe only**: download/extract audio → transcribe
+- **Optional AI polish** works with either mode and writes a separate reviewable artifact
 - **Download only (YouTube)**: just download media, no ASR/TTS
   - `kind=video`: best video+audio merged (mp4 default)
   - `kind=audio`: best audio extracted to wav/mp3 (`--audio-format`)
@@ -27,6 +29,7 @@ A local pipeline to:
 ### Outputs (per item)
 - `<title>.transcript.txt` — raw transcript (segment concatenation)
 - `<title>.transcript_clean.txt` — basic cleanup
+- `<title>.transcript_tts.txt` — optional AI-polished, TTS-ready transcript
 - `<title>.transcript.srt` — subtitles (segment-level)
 - `<title>.transcript.json` — segments + optional word timestamps
 - `<title>.manifest.json` — run metadata
@@ -62,7 +65,7 @@ python -m pip install -U pip setuptools wheel
 pip install "numpy<2"
 
 # Install with ASR + Piper + Web UI
-pip install -e ".[ui,asr,tts_piper]"
+pip install -e ".[ui,asr,tts_piper,tts_microsoft]"
 ```
 
 ### macOS / Linux
@@ -74,7 +77,13 @@ source .venv/bin/activate
 
 python -m pip install -U pip setuptools wheel
 pip install "numpy<2"
-pip install -e ".[ui,asr,tts_piper]"
+pip install -e ".[ui,asr,tts_piper,tts_microsoft]"
+```
+
+For the online Microsoft neural voices used by OpenClaw's Microsoft provider:
+
+```bash
+pip install -e ".[tts_microsoft]"
 ```
 
 ---
@@ -86,7 +95,8 @@ pip install -e ".[ui,asr,tts_piper]"
 y2tts run "https://youtu.be/VIDEO_ID" --out out --mp3 \
   --model distil-large-v3 --vad \
   --tts piper --piper-voice en_US-lessac-medium \
-  --tts-speed 0.9
+  --tts-speed 0.9 \
+  --preserve-paragraph-breaks
 ```
 
 ### 2) Transcribe only (YouTube or playlist)
@@ -119,13 +129,93 @@ y2tts local "C:\path\to\script.txt" --out out --tts piper --mp3
 y2tts local "C:\path\to\captions.vtt" --out out --tts piper
 ```
 
+### 6) Offline AI polish with Ollama
+
+Install and run [Ollama](https://docs.ollama.com/), then install a text model of your choice. The model must already exist locally before running the pipeline.
+
+Polish only, so the result can be reviewed before TTS:
+
+```bash
+y2tts local "C:\path\to\transcript.txt" --out out --tts none \
+  --polish ollama --polish-model llama3.1:8b \
+  --preserve-paragraph-breaks
+```
+
+Fully offline polish and TTS in one run:
+
+```bash
+y2tts local "C:\path\to\transcript.txt" --out out --mp3 \
+  --polish ollama --polish-model llama3.1:8b \
+  --polish-glossary "C:\path\to\glossary.txt" \
+  --tts piper --piper-voice en_US-ryan-high --piper-data-dir voices \
+  --preserve-paragraph-breaks
+```
+
+Ollama defaults to its native API at `http://127.0.0.1:11434`. The tool rejects a non-loopback URL when `--polish ollama` is selected.
+
+On systems with an older or undersized GPU, force reliable CPU execution:
+
+```bash
+y2tts local transcript.txt --tts none --polish ollama \
+  --polish-model YOUR_INSTALLED_MODEL --ollama-num-gpu 0
+```
+
+The WebUI defaults Ollama GPU layers to `0` for stability. Set it to `-1` to let Ollama choose automatically on newer hardware.
+The WebUI also detects installed Ollama generation models and preselects a practical one; embedding models are excluded.
+
+Polishing is intentionally conservative:
+
+- numeric claims must remain unchanged
+- suspicious summarization or expansion is rejected
+- weak models may fail validation instead of producing a fluent but inaccurate transcript
+- successful chunks are checkpointed in `<output>/.polish_chunks/`, so a failed long run can resume
+- a larger instruction-following model is strongly recommended for lectures and technical material
+
+### 7) Other OpenAI-compatible polish endpoints
+
+Compatible local servers such as LM Studio or llama.cpp can use the same endpoint shape. A non-local URL is blocked unless online polishing is explicitly allowed:
+
+```bash
+y2tts local "C:\path\to\transcript.txt" --out out --tts none \
+  --polish openai-compatible --polish-model MODEL_NAME \
+  --polish-base-url https://provider.example/v1 \
+  --polish-api-key-env PROVIDER_API_KEY \
+  --allow-online-polish
+```
+
+`--allow-online-polish` means transcript chunks may leave the computer. API keys are read from environment variables and should not be placed on the command line or in the UI.
+
+### 8) Microsoft Edge Neural TTS (online, no API key)
+```bash
+y2tts local "C:\path\to\script.txt" --out out --tts microsoft --mp3 \
+  --microsoft-voice en-US-MichelleNeural --tts-speed 0.9 \
+  --preserve-paragraph-breaks
+```
+
+Microsoft TTS sends transcript text to Microsoft's online Edge speech service. It is best-effort and requires internet access.
+
+### Recommended high-quality transcript workflow
+
+1. Keep the original ASR transcript unchanged.
+2. Run AI polish with `--tts none`; this creates `<title>.transcript_tts.txt` without overwriting the raw or basic-clean transcript.
+3. Review and edit `<title>.transcript_tts.txt`.
+4. Run the reviewed file through the chosen TTS backend:
+
+```bash
+y2tts local "C:\path\to\transcript_tts.txt" --out out --tts microsoft --mp3 \
+  --microsoft-voice en-US-MichelleNeural --tts-speed 0.9 \
+  --preserve-paragraph-breaks
+```
+
+For one-click operation, enable polishing and TTS in the same command. Use the two-pass flow when fidelity matters. Use Ollama plus Piper when all text must remain offline. Microsoft Neural usually sounds more natural, but sends the reviewed text to Microsoft's online speech service.
+
 ---
 
 ## Web UI (Gradio)
 
 Install UI extra:
 ```bash
-pip install -e ".[ui,asr,tts_piper]"
+pip install -e ".[ui,asr,tts_piper,tts_microsoft]"
 ```
 
 Launch:
@@ -141,8 +231,11 @@ UI supports:
 - Local file accepts audio/video and `.txt/.vtt` for direct TTS
 - Task selection: **Run / Transcribe only / Download only (YouTube)**
 - ASR controls: model/device/VAD/language/word timestamps
-- TTS controls: Piper/Coqui/none, mp3 output
+- Optional AI polish controls: none/Ollama/OpenAI-compatible, model, endpoint, glossary, chunk size, timeout, and online consent
+- TTS controls: Piper/Microsoft/Coqui/none, voice selection, mp3 output
 - TTS speed control (`1.0` normal, `<1` slower, `>1` faster)
+- Optional paragraph-preserving cleanup for more natural TTS pauses (`--preserve-paragraph-breaks`)
+- Preview prefers the AI-polished transcript when one was generated
 
 ---
 

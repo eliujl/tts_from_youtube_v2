@@ -8,11 +8,12 @@ from typing import Literal
 from .asr.faster_whisper_asr import Transcript, transcribe_faster_whisper
 from .audio import normalize_for_asr, retime_wav, wav_to_mp3
 from .download import DownloadResult, download_best_audio, download_video, expand_url
+from .polish import PolishBackend, PolishConfig, polish_transcript
 from .text import basic_cleanup, load_text_input
 from .utils import ensure_dir, sanitize_filename
 
 ASRBackend = Literal["faster-whisper"]
-TTSBackend = Literal["none", "piper", "coqui"]
+TTSBackend = Literal["none", "piper", "microsoft", "coqui"]
 
 
 @dataclass
@@ -28,9 +29,20 @@ class RunConfig:
 
     tts_backend: TTSBackend = "piper"
     tts_speed: float = 1.0  # 1.0=normal, <1.0 slower, >1.0 faster
+    preserve_paragraph_breaks: bool = False
+    polish_backend: PolishBackend = "none"
+    polish_model: str = ""
+    polish_base_url: str = ""
+    polish_api_key_env: str = "OPENAI_API_KEY"
+    polish_glossary_path: Path | None = None
+    polish_chunk_chars: int = 8000
+    polish_timeout_seconds: int = 600
+    polish_allow_remote: bool = False
+    polish_ollama_num_gpu: int | None = None
     piper_voice: str = "en_US-lessac-medium"
     piper_data_dir: Path | None = None
     piper_use_cuda: bool = False
+    microsoft_voice: str = "en-US-MichelleNeural"
     coqui_model: str = "tts_models/en/jenny/jenny"
     coqui_speaker_wav: Path | None = None
     coqui_language: str | None = None
@@ -75,6 +87,30 @@ def _save_transcript(out_dir: Path, t: Transcript) -> dict[str, Path]:
     }
 
 
+def _prepare_tts_text(text: str, out_dir: Path, cfg: RunConfig) -> tuple[str, Path | None]:
+    if cfg.polish_backend == "none":
+        return text, None
+
+    polished = polish_transcript(
+        text,
+        PolishConfig(
+            backend=cfg.polish_backend,
+            model=cfg.polish_model,
+            base_url=cfg.polish_base_url,
+            api_key_env=cfg.polish_api_key_env,
+            glossary_path=cfg.polish_glossary_path,
+            chunk_chars=cfg.polish_chunk_chars,
+            timeout_seconds=cfg.polish_timeout_seconds,
+            allow_remote=cfg.polish_allow_remote,
+            checkpoint_dir=out_dir / ".polish_chunks",
+            ollama_num_gpu=cfg.polish_ollama_num_gpu,
+        ),
+    )
+    transcript_tts = _artifact_path(out_dir, "transcript_tts", "txt")
+    transcript_tts.write_text(polished + "\n", encoding="utf-8")
+    return polished, transcript_tts
+
+
 def _transcribe(audio_wav: Path, cfg: RunConfig) -> Transcript:
     if cfg.asr_backend == "faster-whisper":
         return transcribe_faster_whisper(
@@ -108,6 +144,15 @@ def _synthesize(text: str, out_dir: Path, cfg: RunConfig) -> Path | None:
                 use_cuda=cfg.piper_use_cuda,
                 length_scale=(1.0 / cfg.tts_speed),
             ),
+        )
+
+    elif cfg.tts_backend == "microsoft":
+        from .tts.microsoft_tts import MicrosoftConfig, synthesize_to_wav
+
+        synthesize_to_wav(
+            text,
+            out_wav,
+            MicrosoftConfig(voice=cfg.microsoft_voice, speed=cfg.tts_speed),
         )
 
     elif cfg.tts_backend == "coqui":
@@ -158,11 +203,17 @@ def run_single(url: str, cfg: RunConfig) -> Path:
     t = _transcribe(norm_wav, cfg)
     transcript_paths = _save_transcript(work_dir, t)
 
-    cleaned = basic_cleanup(t.to_text())
+    cleaned = basic_cleanup(
+        t.to_text(),
+        preserve_paragraph_breaks=(
+            cfg.preserve_paragraph_breaks or cfg.polish_backend != "none"
+        ),
+    )
     transcript_clean = _artifact_path(work_dir, "transcript_clean", "txt")
     transcript_clean.write_text(cleaned + "\n", encoding="utf-8")
 
-    tts_path = _synthesize(cleaned, work_dir, cfg)
+    tts_text, transcript_tts = _prepare_tts_text(cleaned, work_dir, cfg)
+    tts_path = _synthesize(tts_text, work_dir, cfg)
 
     _write_manifest(
         work_dir,
@@ -179,6 +230,11 @@ def run_single(url: str, cfg: RunConfig) -> Path:
                 "language": t.language,
                 "language_probability": t.language_probability,
             },
+            "polish": {
+                "backend": cfg.polish_backend,
+                "model": cfg.polish_model or None,
+                "output": str(transcript_tts) if transcript_tts else None,
+            },
             "tts": {
                 "backend": cfg.tts_backend,
                 "speed": cfg.tts_speed,
@@ -190,6 +246,7 @@ def run_single(url: str, cfg: RunConfig) -> Path:
                 "transcript_clean": str(transcript_clean),
                 "transcript_srt": str(transcript_paths["transcript_srt"]),
                 "transcript_json": str(transcript_paths["transcript_json"]),
+                **({"transcript_tts": str(transcript_tts)} if transcript_tts else {}),
             },
         },
     )
@@ -223,10 +280,16 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
 
         transcript_txt = _artifact_path(work_dir, "transcript", "txt")
         transcript_txt.write_text(raw_text + "\n", encoding="utf-8")
-        cleaned = basic_cleanup(raw_text)
+        cleaned = basic_cleanup(
+            raw_text,
+            preserve_paragraph_breaks=(
+                cfg.preserve_paragraph_breaks or cfg.polish_backend != "none"
+            ),
+        )
         transcript_clean = _artifact_path(work_dir, "transcript_clean", "txt")
         transcript_clean.write_text(cleaned + "\n", encoding="utf-8")
-        tts_path = _synthesize(cleaned, work_dir, cfg)
+        tts_text, transcript_tts = _prepare_tts_text(cleaned, work_dir, cfg)
+        tts_path = _synthesize(tts_text, work_dir, cfg)
 
         _write_manifest(
             work_dir,
@@ -234,6 +297,11 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
                 "source_file": str(src),
                 "title": title,
                 "input_kind": "text",
+                "polish": {
+                    "backend": cfg.polish_backend,
+                    "model": cfg.polish_model or None,
+                    "output": str(transcript_tts) if transcript_tts else None,
+                },
                 "tts": {
                     "backend": cfg.tts_backend,
                     "speed": cfg.tts_speed,
@@ -242,6 +310,7 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
                 "artifacts": {
                     "transcript": str(transcript_txt),
                     "transcript_clean": str(transcript_clean),
+                    **({"transcript_tts": str(transcript_tts)} if transcript_tts else {}),
                 },
             },
         )
@@ -254,11 +323,17 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
     t = _transcribe(norm_wav, cfg)
     transcript_paths = _save_transcript(work_dir, t)
 
-    cleaned = basic_cleanup(t.to_text())
+    cleaned = basic_cleanup(
+        t.to_text(),
+        preserve_paragraph_breaks=(
+            cfg.preserve_paragraph_breaks or cfg.polish_backend != "none"
+        ),
+    )
     transcript_clean = _artifact_path(work_dir, "transcript_clean", "txt")
     transcript_clean.write_text(cleaned + "\n", encoding="utf-8")
 
-    tts_path = _synthesize(cleaned, work_dir, cfg)
+    tts_text, transcript_tts = _prepare_tts_text(cleaned, work_dir, cfg)
+    tts_path = _synthesize(tts_text, work_dir, cfg)
 
     _write_manifest(
         work_dir,
@@ -272,6 +347,11 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
                 "language": t.language,
                 "language_probability": t.language_probability,
             },
+            "polish": {
+                "backend": cfg.polish_backend,
+                "model": cfg.polish_model or None,
+                "output": str(transcript_tts) if transcript_tts else None,
+            },
             "tts": {
                 "backend": cfg.tts_backend,
                 "speed": cfg.tts_speed,
@@ -283,6 +363,7 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
                 "transcript_clean": str(transcript_clean),
                 "transcript_srt": str(transcript_paths["transcript_srt"]),
                 "transcript_json": str(transcript_paths["transcript_json"]),
+                **({"transcript_tts": str(transcript_tts)} if transcript_tts else {}),
             },
         },
     )

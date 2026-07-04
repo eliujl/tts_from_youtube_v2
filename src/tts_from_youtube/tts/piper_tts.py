@@ -27,7 +27,12 @@ def ensure_voice_downloaded(cfg: PiperConfig) -> Path:
     data_dir = cfg.data_dir or Path.cwd() / "voices"
     ensure_dir(data_dir)
 
-    # Voice package downloader stores in data_dir/<voice>/
+    # Voice packages may be stored either directly in data_dir or in a
+    # data_dir/<voice>/ subdirectory, depending on the downloader version.
+    flat_onnx = data_dir / f"{cfg.voice}.onnx"
+    if flat_onnx.exists():
+        return flat_onnx
+
     voice_dir = data_dir / cfg.voice
     onnx = voice_dir / f"{cfg.voice}.onnx"
     if onnx.exists():
