@@ -17,6 +17,7 @@ dependencies = [
   "pydantic>=2.7.0",
   "srt>=3.5.3",
   "regex>=2024.5.15",
+  "pypdf>=5.0.0,<7.0.0",
 ]
 
 [project.optional-dependencies]

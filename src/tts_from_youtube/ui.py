@@ -370,12 +370,13 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                         ".aac",
                         ".txt",
                         ".vtt",
+                        ".pdf",
                     ],
                     type="filepath",
                     scale=2,
                 )
             gr.Markdown(
-                "Provide at least one input. For local `.txt`/`.vtt`, the app skips ASR and runs direct TTS."
+                "Provide at least one input. Local `.txt`/`.vtt` and text-based `.pdf` files skip ASR."
             )
 
         with gr.Accordion("3) ASR Settings (faster-whisper)", open=False):
@@ -501,10 +502,12 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 piper_cuda = gr.Checkbox(label="Use Piper CUDA (requires onnxruntime-gpu)", value=False)
 
             with gr.Accordion("Microsoft Edge Neural (online)", open=False):
-                microsoft_voice = gr.Textbox(
+                microsoft_voice = gr.Dropdown(
                     label="Voice",
+                    choices=["en-US-MichelleNeural", "zh-CN-XiaoxiaoNeural"],
                     value="en-US-MichelleNeural",
-                    info="Online Microsoft neural voice, matching OpenClaw's Microsoft provider.",
+                    allow_custom_value=True,
+                    info="Choose English or Chinese, or enter any Microsoft Edge neural voice name.",
                 )
 
             with gr.Accordion("Coqui", open=False):
@@ -591,7 +594,8 @@ def build_app(default_out: str = "out") -> gr.Blocks:
         gr.Markdown(
             "### Notes\n"
             "- **Download only (YouTube)** skips ASR/TTS and just downloads media.\n"
-            "- **Local file** mode accepts audio/video plus `.txt`/`.vtt` for direct TTS.\n"
+            "- **Local file** mode accepts audio/video plus `.txt`/`.vtt` and text-based `.pdf` for direct TTS.\n"
+            "- Scanned/image-only PDFs must be OCRed first.\n"
             "- **Ollama polish** stays on localhost; online-compatible endpoints require explicit consent.\n"
             "- Requires `ffmpeg` on PATH."
         )

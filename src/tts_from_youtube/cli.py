@@ -219,7 +219,7 @@ def local(
     coqui_speaker_wav: Path | None = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
     coqui_language: str | None = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
 ):
-    """Run ASR/TTS on a local file (no YouTube). .txt/.vtt inputs skip ASR and run direct TTS."""
+    """Run ASR/TTS locally. .txt/.vtt/.pdf inputs skip ASR and run direct TTS."""
     cfg = RunConfig(
         out_dir=out,
         asr_model=model,

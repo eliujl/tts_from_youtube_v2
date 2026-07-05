@@ -44,8 +44,32 @@ _VTT_TIMESTAMP = re.compile(
 _VTT_CUE_INDEX = re.compile(r"^\s*\d+\s*$")
 
 
+def _load_pdf(path: Path) -> str:
+    try:
+        from pypdf import PdfReader
+        from pypdf.errors import FileNotDecryptedError, PdfReadError
+    except ImportError as exc:  # pragma: no cover - declared dependency
+        raise RuntimeError("PDF support requires pypdf: pip install -e .") from exc
+
+    try:
+        reader = PdfReader(path)
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise ValueError("Remove the PDF password before processing it.")
+        pages = [(page.extract_text() or "").strip() for page in reader.pages]
+    except (FileNotDecryptedError, PdfReadError) as exc:
+        raise ValueError(f"Could not read PDF: {exc}") from exc
+
+    text = "\n\n".join(page for page in pages if page).strip()
+    if not text:
+        raise ValueError(
+            "No selectable text was found. This PDF may be scanned or image-only; "
+            "run OCR on it first."
+        )
+    return text
+
+
 def load_text_input(path: Path) -> str:
-    """Load plain text from a .txt or .vtt file."""
+    """Load text from a .txt, .vtt, or text-based .pdf file."""
     src = Path(path).expanduser().resolve()
     suffix = src.suffix.lower()
 
@@ -69,5 +93,8 @@ def load_text_input(path: Path) -> str:
                 continue
             text_lines.append(line)
         return " ".join(text_lines).strip()
+
+    if suffix == ".pdf":
+        return _load_pdf(src)
 
     raise ValueError(f"Unsupported text input type: {suffix}")

@@ -16,7 +16,8 @@ A local pipeline to:
 ### Inputs
 - **YouTube** video or **playlist**
 - **Local file upload**: `.mp4/.mkv/.webm/.mov/.mp3/.wav/.m4a/.flac/.ogg/.aac`
-- **Text input for direct TTS**: `.txt/.vtt` (skips ASR)
+- **Text/document input for direct TTS**: `.txt/.vtt/.pdf` (skips ASR)
+- PDFs must contain selectable text; scanned/image-only PDFs require OCR first
 
 ### Modes
 - **Run (ASR + TTS)**: download/extract audio → transcribe → synthesize
@@ -127,6 +128,7 @@ y2tts local "C:\path\to\video.mp4" --out out --model distil-large-v3 --tts piper
 ```bash
 y2tts local "C:\path\to\script.txt" --out out --tts piper --mp3
 y2tts local "C:\path\to\captions.vtt" --out out --tts piper
+y2tts local "C:\path\to\document.pdf" --out out --tts microsoft --mp3
 ```
 
 ### 6) Offline AI polish with Ollama
@@ -193,6 +195,7 @@ y2tts local "C:\path\to\script.txt" --out out --tts microsoft --mp3 \
 ```
 
 Microsoft TTS sends transcript text to Microsoft's online Edge speech service. It is best-effort and requires internet access.
+The WebUI offers `en-US-MichelleNeural` and `zh-CN-XiaoxiaoNeural` by default and also accepts any other Microsoft Edge neural voice name.
 
 ### Recommended high-quality transcript workflow
 
@@ -228,7 +231,8 @@ Open:
 
 UI supports:
 - **YouTube** URL or **Local file** upload
-- Local file accepts audio/video and `.txt/.vtt` for direct TTS
+- Local file accepts audio/video and `.txt/.vtt/.pdf` for direct TTS
+- PDF extraction supports selectable-text PDFs; scanned/image-only PDFs require OCR first
 - Task selection: **Run / Transcribe only / Download only (YouTube)**
 - ASR controls: model/device/VAD/language/word timestamps
 - Optional AI polish controls: none/Ollama/OpenAI-compatible, model, endpoint, glossary, chunk size, timeout, and online consent

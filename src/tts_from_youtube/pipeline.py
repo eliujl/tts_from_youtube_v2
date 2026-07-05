@@ -272,8 +272,8 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
     title = sanitize_filename(src.stem)
     work_dir = ensure_dir(cfg.out_dir / title)
 
-    # Text-first path: no ASR needed, synthesize directly from provided transcript.
-    if src.suffix.lower() in {".txt", ".vtt"}:
+    # Text-first path: no ASR needed, synthesize directly from provided text/document.
+    if src.suffix.lower() in {".txt", ".vtt", ".pdf"}:
         raw_text = load_text_input(src)
         if not raw_text:
             raise ValueError(f"No usable text found in input file: {src}")
