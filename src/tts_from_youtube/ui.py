@@ -10,6 +10,16 @@ from .pipeline import RunConfig, download_only, run_local_file, run_many
 from .polish import list_ollama_models
 
 
+def _gr_file(**kwargs):
+    """Build a File component across Gradio versions with differing kwargs."""
+    try:
+        return gr.File(**kwargs)
+    except TypeError:
+        fallback = dict(kwargs)
+        fallback.pop("info", None)
+        return gr.File(**fallback)
+
+
 def _coerce_file_path(v: Any) -> str | None:
     """Gradio 4/5 may return str, dict, or FileData-like objects for File components."""
     if v is None:
@@ -196,6 +206,7 @@ def _run(
     polish_base_url: str,
     polish_api_key_env: str,
     polish_glossary: Any,
+    polish_instructions: Any,
     polish_chunk_chars: int,
     polish_timeout: int,
     ollama_num_gpu: int,
@@ -262,6 +273,11 @@ def _run(
         polish_glossary_path=(
             Path(_coerce_file_path(polish_glossary)).expanduser().resolve()
             if _coerce_file_path(polish_glossary)
+            else None
+        ),
+        polish_instructions_path=(
+            Path(_coerce_file_path(polish_instructions)).expanduser().resolve()
+            if _coerce_file_path(polish_instructions)
             else None
         ),
         polish_chunk_chars=int(polish_chunk_chars),
@@ -355,7 +371,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     info="Used when Source is YouTube.",
                     scale=3,
                 )
-                local_file = gr.File(
+                local_file = _gr_file(
                     label="Local file upload",
                     file_types=[
                         ".mp4",
@@ -369,6 +385,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                         ".ogg",
                         ".aac",
                         ".txt",
+                        ".md",
                         ".vtt",
                         ".pdf",
                     ],
@@ -376,7 +393,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     scale=2,
                 )
             gr.Markdown(
-                "Provide at least one input. Local `.txt`/`.vtt` and text-based `.pdf` files skip ASR."
+                "Provide at least one input. Local `.txt`/`.md`/`.vtt` and text-based `.pdf` files skip ASR."
             )
 
         with gr.Accordion("3) ASR Settings (faster-whisper)", open=False):
@@ -440,10 +457,16 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     info="The UI reads the key from this environment variable; never paste a key here.",
                 )
             with gr.Row():
-                polish_glossary = gr.File(
+                polish_glossary = _gr_file(
                     label="Terminology glossary (optional)",
                     file_types=[".txt", ".md"],
                     type="filepath",
+                )
+                polish_instructions = _gr_file(
+                    label="Custom polish requirements (optional)",
+                    file_types=[".txt", ".md"],
+                    type="filepath",
+                    info="Extra editing or audio-preparation instructions for this document.",
                 )
                 polish_chunk_chars = gr.Number(
                     label="Characters per polish request",
@@ -516,7 +539,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     value="tts_models/en/jenny/jenny",
                     info="Coqui model identifier.",
                 )
-                coqui_speaker_wav = gr.File(
+                coqui_speaker_wav = _gr_file(
                     label="Speaker WAV (optional, for cloning models)",
                     file_types=[".wav"],
                     type="filepath",
@@ -542,7 +565,9 @@ def build_app(default_out: str = "out") -> gr.Blocks:
             )
             gr.Markdown("- **video**: best video+audio merged (mp4 by default)\n- **audio**: best audio extracted to `wav` or `mp3`")
 
-        run_btn = gr.Button("Run Pipeline", variant="primary")
+        with gr.Row():
+            run_btn = gr.Button("Run Pipeline", variant="primary")
+            cancel_btn = gr.Button("Cancel", variant="stop")
         status = gr.Textbox(label="Result folders", lines=4)
         preview = gr.Textbox(
             label="Transcript preview",
@@ -551,7 +576,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
         )
         downloads = gr.Files(label="Artifacts", file_count="multiple")
 
-        run_btn.click(
+        run_event = run_btn.click(
             fn=_run,
             inputs=[
                 source_type,
@@ -570,6 +595,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 polish_base_url,
                 polish_api_key_env,
                 polish_glossary,
+                polish_instructions,
                 polish_chunk_chars,
                 polish_timeout,
                 ollama_num_gpu,
@@ -590,13 +616,27 @@ def build_app(default_out: str = "out") -> gr.Blocks:
             ],
             outputs=[status, preview, downloads],
         )
+        cancel_btn.click(
+            fn=lambda: (
+                "Cancellation requested. Queued jobs stop immediately. If a step is already running, "
+                "the current step may finish before the pipeline stops.",
+                "",
+                [],
+            ),
+            inputs=None,
+            outputs=[status, preview, downloads],
+            cancels=[run_event],
+            queue=False,
+        )
 
         gr.Markdown(
             "### Notes\n"
             "- **Download only (YouTube)** skips ASR/TTS and just downloads media.\n"
-            "- **Local file** mode accepts audio/video plus `.txt`/`.vtt` and text-based `.pdf` for direct TTS.\n"
+            "- **Local file** mode accepts audio/video plus `.txt`/`.md`/`.vtt` and text-based `.pdf` for direct TTS.\n"
             "- Scanned/image-only PDFs must be OCRed first.\n"
             "- **Ollama polish** stays on localhost; online-compatible endpoints require explicit consent.\n"
+            "- **Cancel** stops queued jobs right away; an in-progress ASR/TTS step may need a moment to finish.\n"
+            "- Stop the local server from a terminal with `y2tts ui-stop`.\n"
             "- Requires `ffmpeg` on PATH."
         )
 

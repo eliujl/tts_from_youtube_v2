@@ -9,7 +9,7 @@ from .asr.faster_whisper_asr import Transcript, transcribe_faster_whisper
 from .audio import normalize_for_asr, retime_wav, wav_to_mp3
 from .download import DownloadResult, download_best_audio, download_video, expand_url
 from .polish import PolishBackend, PolishConfig, polish_transcript
-from .text import basic_cleanup, load_text_input
+from .text import basic_cleanup, load_text_input, tts_cleanup
 from .utils import ensure_dir, sanitize_filename
 
 ASRBackend = Literal["faster-whisper"]
@@ -35,6 +35,7 @@ class RunConfig:
     polish_base_url: str = ""
     polish_api_key_env: str = "OPENAI_API_KEY"
     polish_glossary_path: Path | None = None
+    polish_instructions_path: Path | None = None
     polish_chunk_chars: int = 8000
     polish_timeout_seconds: int = 600
     polish_allow_remote: bool = False
@@ -88,6 +89,7 @@ def _save_transcript(out_dir: Path, t: Transcript) -> dict[str, Path]:
 
 
 def _prepare_tts_text(text: str, out_dir: Path, cfg: RunConfig) -> tuple[str, Path | None]:
+    text = tts_cleanup(text)
     if cfg.polish_backend == "none":
         return text, None
 
@@ -99,6 +101,7 @@ def _prepare_tts_text(text: str, out_dir: Path, cfg: RunConfig) -> tuple[str, Pa
             base_url=cfg.polish_base_url,
             api_key_env=cfg.polish_api_key_env,
             glossary_path=cfg.polish_glossary_path,
+            instructions_path=cfg.polish_instructions_path,
             chunk_chars=cfg.polish_chunk_chars,
             timeout_seconds=cfg.polish_timeout_seconds,
             allow_remote=cfg.polish_allow_remote,
@@ -273,7 +276,7 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
     work_dir = ensure_dir(cfg.out_dir / title)
 
     # Text-first path: no ASR needed, synthesize directly from provided text/document.
-    if src.suffix.lower() in {".txt", ".vtt", ".pdf"}:
+    if src.suffix.lower() in {".txt", ".md", ".vtt", ".pdf"}:
         raw_text = load_text_input(src)
         if not raw_text:
             raise ValueError(f"No usable text found in input file: {src}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 from .utils import which
@@ -91,3 +92,37 @@ def retime_wav(in_wav: Path, out_wav: Path, speed: float) -> None:
         str(out_wav),
     ]
     subprocess.run(cmd, check=True)
+
+
+def concat_wavs(inputs: list[Path], out_wav: Path) -> None:
+    """Concatenate WAV files with ffmpeg."""
+    if not inputs:
+        raise ValueError("concat_wavs requires at least one input file.")
+    if len(inputs) == 1:
+        out_wav.parent.mkdir(parents=True, exist_ok=True)
+        if inputs[0] != out_wav:
+            out_wav.write_bytes(inputs[0].read_bytes())
+        return
+
+    require_ffmpeg()
+    out_wav.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="ffmpeg-concat-", dir=out_wav.parent) as temp_dir:
+        list_path = Path(temp_dir) / "inputs.txt"
+        list_path.write_text(
+            "".join(f"file '{p.resolve().as_posix()}'\n" for p in inputs),
+            encoding="utf-8",
+        )
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(list_path),
+            "-c:a",
+            "pcm_s16le",
+            str(out_wav),
+        ]
+        subprocess.run(cmd, check=True)

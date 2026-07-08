@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import atexit
+import json
+import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 import typer
@@ -10,6 +16,8 @@ from .pipeline import RunConfig, download_only, run_local_file, run_many
 
 app = typer.Typer(add_completion=False, help="Download YouTube audio -> transcribe -> resynthesize (local ASR/TTS).")
 console = Console()
+UI_STATE_PATH = Path(".y2tts_ui_server.json")
+UI_TEMP_DIR = Path(".y2tts_tmp")
 
 
 def _print_done(paths: list[Path]) -> None:
@@ -18,6 +26,112 @@ def _print_done(paths: list[Path]) -> None:
     for p in paths:
         tbl.add_row(str(p))
     console.print(tbl)
+
+
+def _ui_state_path() -> Path:
+    return UI_STATE_PATH.resolve()
+
+
+def _ensure_ui_tempdir() -> Path:
+    temp_dir = UI_TEMP_DIR.resolve()
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_str = str(temp_dir)
+    os.environ["TMPDIR"] = temp_str
+    os.environ["TEMP"] = temp_str
+    os.environ["TMP"] = temp_str
+    return temp_dir
+
+
+def _write_ui_state(*, pid: int, host: str, port: int, out: Path) -> Path:
+    state_path = _ui_state_path()
+    payload = {
+        "pid": pid,
+        "host": host,
+        "port": port,
+        "out": str(out.resolve()),
+        "cwd": str(Path.cwd().resolve()),
+    }
+    state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return state_path
+
+
+def _clear_ui_state() -> None:
+    state_path = _ui_state_path()
+    try:
+        state_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _read_ui_state() -> dict | None:
+    state_path = _ui_state_path()
+    if not state_path.exists():
+        return None
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform.startswith("win"):
+        res = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        text = (res.stdout or "").strip()
+        return bool(text) and "No tasks are running" not in text
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _stop_pid(pid: int) -> None:
+    if sys.platform.startswith("win"):
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return
+    os.kill(pid, signal.SIGTERM)
+
+
+def _pid_listening_on_port(port: int) -> int | None:
+    if port <= 0:
+        return None
+
+    if sys.platform.startswith("win"):
+        cmd = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                f"$conn = Get-NetTCPConnection -LocalPort {port} -State Listen "
+                "-ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess; "
+                "if($conn){ $conn }"
+            ),
+        ]
+        res = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        text = (res.stdout or "").strip()
+        return int(text) if text.isdigit() else None
+
+    res = subprocess.run(
+        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    text = (res.stdout or "").strip().splitlines()
+    return int(text[0]) if text and text[0].isdigit() else None
 
 
 @app.command()
@@ -77,6 +191,9 @@ def run(
     polish_glossary: Path | None = typer.Option(
         None, "--polish-glossary", help="Optional UTF-8 terminology glossary"
     ),
+    polish_instructions: Path | None = typer.Option(
+        None, "--polish-instructions", help="Optional UTF-8 custom polish requirements"
+    ),
     polish_chunk_chars: int = typer.Option(
         8000, "--polish-chunk-chars", help="Maximum source characters per polish request"
     ),
@@ -121,6 +238,7 @@ def run(
         polish_base_url=polish_base_url,
         polish_api_key_env=polish_api_key_env,
         polish_glossary_path=polish_glossary,
+        polish_instructions_path=polish_instructions,
         polish_chunk_chars=polish_chunk_chars,
         polish_timeout_seconds=polish_timeout,
         polish_allow_remote=allow_online_polish,
@@ -145,9 +263,99 @@ def ui(
     out: Path = typer.Option(Path("out"), "--out", "-o", help="Default output directory shown in UI"),
 ):
     """Launch a local web UI (Gradio). Requires: pip install -e ".[ui,asr,tts_piper]" """
+    temp_dir = _ensure_ui_tempdir()
     from .ui import main as ui_main
 
-    ui_main(host=host, port=port, share=share, out=str(out))
+    state = _read_ui_state()
+    if state:
+        pid = int(state.get("pid", 0) or 0)
+        if _pid_running(pid):
+            console.print(
+                f"[yellow]A y2tts UI server is already recorded as running on port {state.get('port', '?')} "
+                f"(PID {pid}). Use `y2tts ui-stop` first if you want to replace it.[/yellow]"
+            )
+            raise typer.Exit(code=1)
+        _clear_ui_state()
+
+    state_path = _write_ui_state(pid=os.getpid(), host=host, port=port, out=out)
+    atexit.register(_clear_ui_state)
+    console.print(f"[dim]UI server state file: {state_path}[/dim]")
+    console.print(f"[dim]UI temp directory: {temp_dir}[/dim]")
+    console.print("[dim]Stop this server later with: y2tts ui-stop[/dim]")
+    try:
+        ui_main(host=host, port=port, share=share, out=str(out))
+    finally:
+        _clear_ui_state()
+
+
+@app.command("ui-stop")
+def ui_stop():
+    """Stop the last y2tts UI server started from this workspace."""
+    state = _read_ui_state()
+    if not state:
+        fallback_pid = _pid_listening_on_port(7860)
+        if fallback_pid and _pid_running(fallback_pid):
+            _stop_pid(fallback_pid)
+            console.print(
+                f"[green]Stopped the process listening on port 7860 (PID {fallback_pid}) "
+                "[/green][dim](no workspace state file was present)[/dim]"
+            )
+            return
+        console.print("[yellow]No recorded y2tts UI server was found in this workspace.[/yellow]")
+        raise typer.Exit(code=1)
+
+    pid = int(state.get("pid", 0) or 0)
+    port = state.get("port", "?")
+    if not _pid_running(pid):
+        fallback_pid = _pid_listening_on_port(int(port) if str(port).isdigit() else 7860)
+        if fallback_pid and _pid_running(fallback_pid):
+            _stop_pid(fallback_pid)
+            _clear_ui_state()
+            console.print(
+                f"[green]Stopped the process listening on port {port} (PID {fallback_pid}) "
+                "[/green][dim](the recorded PID was stale)[/dim]"
+            )
+            return
+        _clear_ui_state()
+        console.print(f"[yellow]Found a stale UI record for PID {pid} on port {port}. Removed it.[/yellow]")
+        raise typer.Exit(code=1)
+
+    _stop_pid(pid)
+    _clear_ui_state()
+    console.print(f"[green]Stopped y2tts UI server on port {port} (PID {pid}).[/green]")
+
+
+@app.command("ui-status")
+def ui_status():
+    """Show whether this workspace has a recorded y2tts UI server."""
+    state = _read_ui_state()
+    if not state:
+        fallback_pid = _pid_listening_on_port(7860)
+        if fallback_pid and _pid_running(fallback_pid):
+            console.print(
+                f"[cyan]UI server:[/cyan] running | host=127.0.0.1 port=7860 pid={fallback_pid} "
+                "[dim](detected by listening port; no workspace state file)[/dim]"
+            )
+            return
+        console.print("[yellow]No recorded y2tts UI server was found in this workspace.[/yellow]")
+        return
+
+    pid = int(state.get("pid", 0) or 0)
+    port = state.get("port", "?")
+    host = state.get("host", "?")
+    if _pid_running(pid):
+        status = "running"
+        live_pid = pid
+    else:
+        fallback_pid = _pid_listening_on_port(int(port) if str(port).isdigit() else 7860)
+        if fallback_pid and _pid_running(fallback_pid):
+            status = "running"
+            live_pid = fallback_pid
+            host = host or "127.0.0.1"
+        else:
+            status = "stale"
+            live_pid = pid
+    console.print(f"[cyan]UI server:[/cyan] {status} | host={host} port={port} pid={live_pid}")
 
 @app.command()
 def download(
@@ -164,7 +372,7 @@ def download(
 
 @app.command()
 def local(
-    path: Path = typer.Argument(..., help="Local audio/video/text file path (e.g. mp4, wav, mp3, txt, vtt)"),
+    path: Path = typer.Argument(..., help="Local audio/video/text file path (e.g. mp4, wav, mp3, txt, md, vtt)"),
     out: Path = typer.Option(Path("out"), "--out", "-o", help="Output directory"),
     model: str = typer.Option("distil-large-v3", "--model", help="faster-whisper model name"),
     device: str = typer.Option("auto", "--device", help="auto|cpu|cuda"),
@@ -191,6 +399,9 @@ def local(
     ),
     polish_glossary: Path | None = typer.Option(
         None, "--polish-glossary", help="Optional UTF-8 terminology glossary"
+    ),
+    polish_instructions: Path | None = typer.Option(
+        None, "--polish-instructions", help="Optional UTF-8 custom polish requirements"
     ),
     polish_chunk_chars: int = typer.Option(
         8000, "--polish-chunk-chars", help="Maximum source characters per polish request"
@@ -219,7 +430,7 @@ def local(
     coqui_speaker_wav: Path | None = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
     coqui_language: str | None = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
 ):
-    """Run ASR/TTS locally. .txt/.vtt/.pdf inputs skip ASR and run direct TTS."""
+    """Run ASR/TTS locally. .txt/.md/.vtt/.pdf inputs skip ASR and run direct TTS."""
     cfg = RunConfig(
         out_dir=out,
         asr_model=model,
@@ -236,6 +447,7 @@ def local(
         polish_base_url=polish_base_url,
         polish_api_key_env=polish_api_key_env,
         polish_glossary_path=polish_glossary,
+        polish_instructions_path=polish_instructions,
         polish_chunk_chars=polish_chunk_chars,
         polish_timeout_seconds=polish_timeout,
         polish_allow_remote=allow_online_polish,

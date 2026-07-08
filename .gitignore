@@ -49,6 +49,8 @@ Thumbs.db
 LOCAL_SUMMARY.md
 .agents/
 .codex/
+.y2tts_tmp/
+.y2tts_ui_server.json
 
 # Local configuration and credentials
 .env
@@ -61,6 +63,7 @@ LOCAL_SUMMARY.md
 
 # --- Project outputs (recommended to ignore) ---
 out/
+out_ms_retest/
 outputs/
 downloads/
 voices/

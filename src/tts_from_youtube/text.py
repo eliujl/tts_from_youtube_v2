@@ -38,6 +38,28 @@ def basic_cleanup(
     return "\n\n".join(cleaned_parts)
 
 
+def tts_cleanup(text: str) -> str:
+    """Remove machine-oriented material and spacing that sounds wrong in TTS."""
+    kept: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        stripped = re.sub(r"(?:https?://|www\.)\S+", "", stripped, flags=re.IGNORECASE).strip()
+        if re.fullmatch(r"(?:table\s+of\s+contents|contents|目录)[:：]?", stripped, re.IGNORECASE):
+            continue
+        if re.fullmatch(r".{2,120}\s*(?:\.{2,}|…{2,})\s*\d+", stripped):
+            continue
+        stripped = re.sub(
+            r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T-]\d{1,2}[:.-]\d{2}(?::\d{2})?\b",
+            "",
+            stripped,
+        )
+        stripped = re.sub(r"\[?\b\d{1,2}:\d{2}(?::\d{2})?\b\]?", "", stripped)
+        stripped = re.sub(r"(?<=[\p{Han}\p{P}])\s+(?=[\p{Han}\p{P}])", "", stripped)
+        if stripped:
+            kept.append(stripped)
+    return "\n".join(kept).strip()
+
+
 _VTT_TIMESTAMP = re.compile(
     r"^\s*\d{2}:\d{2}(?::\d{2})?\.\d{3}\s+-->\s+\d{2}:\d{2}(?::\d{2})?\.\d{3}"
 )
@@ -69,11 +91,11 @@ def _load_pdf(path: Path) -> str:
 
 
 def load_text_input(path: Path) -> str:
-    """Load text from a .txt, .vtt, or text-based .pdf file."""
+    """Load text from a .txt, .md, .vtt, or text-based .pdf file."""
     src = Path(path).expanduser().resolve()
     suffix = src.suffix.lower()
 
-    if suffix == ".txt":
+    if suffix in {".txt", ".md"}:
         return src.read_text(encoding="utf-8").strip()
 
     if suffix == ".vtt":

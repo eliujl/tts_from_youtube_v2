@@ -3,7 +3,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from tts_from_youtube.text import basic_cleanup, load_text_input
+from tts_from_youtube.text import basic_cleanup, load_text_input, tts_cleanup
 
 
 def test_basic_cleanup_preserves_paragraph_breaks_when_enabled() -> None:
@@ -16,6 +16,23 @@ def test_basic_cleanup_flattens_breaks_by_default() -> None:
     raw = "Hello there.\nHow are you?\n\nI am fine."
     cleaned = basic_cleanup(raw)
     assert cleaned == "Hello there. How are you? I am fine."
+
+
+def test_tts_cleanup_removes_non_audio_content_and_chinese_spaces() -> None:
+    text = (
+        "所以你们看到了完整的图景， 你的心智。\n"
+        "文章链接 http://example.com/a?x=1\n"
+        "Table of Contents\nChapter One ........ 3\n"
+        "正文保留。"
+    )
+    assert tts_cleanup(text) == "所以你们看到了完整的图景，你的心智。\n文章链接\n正文保留。"
+
+
+def test_load_markdown_reads_plain_text(tmp_path) -> None:
+    md = tmp_path / "notes.md"
+    md.write_text("# Title\n\nThis is **markdown** content.", encoding="utf-8")
+
+    assert load_text_input(md) == "# Title\n\nThis is **markdown** content."
 
 
 def _mock_pypdf(monkeypatch: pytest.MonkeyPatch, pages: list[str]) -> None:

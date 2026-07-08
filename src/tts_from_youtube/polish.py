@@ -30,6 +30,7 @@ class PolishConfig:
     base_url: str = ""
     api_key_env: str = "OPENAI_API_KEY"
     glossary_path: Path | None = None
+    instructions_path: Path | None = None
     chunk_chars: int = 8000
     timeout_seconds: int = 600
     allow_remote: bool = False
@@ -44,6 +45,9 @@ Keep numeric expressions and quantities exactly as written in the source.
 Repair likely transcription errors, punctuation, sentence boundaries, grammar, false starts,
 and accidental repetition. Use short, natural sentences and paragraph breaks for audible pacing.
 Keep meaningful speaker context. Omit only chatter that is wholly unintelligible and nonessential.
+Omit URLs, link/share metadata, machine timestamps or IDs, tables of contents, page-navigation
+entries, and other material that is useful on a page but unsuitable for spoken audio.
+For Chinese text, remove inappropriate spaces between Chinese characters and punctuation.
 Expand symbols or abbreviations only when needed for natural speech.
 Return only the polished transcript text, with no commentary, heading, or Markdown fence."""
 
@@ -340,6 +344,7 @@ def _polish_chunk(
     index: int,
     total: int,
     glossary: str,
+    instructions: str,
     cfg: PolishConfig,
 ) -> str:
     base_url, api_key = _resolve_endpoint(cfg)
@@ -353,10 +358,15 @@ def _polish_chunk(
         if glossary
         else ""
     )
+    instructions_note = (
+        f"\n\nAdditional user requirements (apply when they do not invent or alter facts):\n{instructions}"
+        if instructions
+        else ""
+    )
     user_prompt = (
         f"Polish transcript chunk {index} of {total}. It is one continuous document; "
         "do not add an introduction or conclusion."
-        f"{glossary_note}\n\nTRANSCRIPT CHUNK:\n{chunk}"
+        f"{glossary_note}{instructions_note}\n\nTRANSCRIPT CHUNK:\n{chunk}"
     )
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
@@ -429,6 +439,7 @@ def polish_transcript(text: str, cfg: PolishConfig) -> str:
         raise ValueError("polish chunk size must be at least 500 characters")
 
     glossary = _read_glossary(cfg.glossary_path)
+    instructions = _read_glossary(cfg.instructions_path)
     chunks = split_for_polish(text, cfg.chunk_chars)
     checkpoint_dir = Path(cfg.checkpoint_dir) if cfg.checkpoint_dir else None
     if checkpoint_dir:
@@ -446,6 +457,7 @@ def polish_transcript(text: str, cfg: PolishConfig) -> str:
                         "base_url": cfg.base_url,
                         "system_prompt": _SYSTEM_PROMPT,
                         "glossary": glossary,
+                        "instructions": instructions,
                         "chunk": chunk,
                     },
                     sort_keys=True,
@@ -468,6 +480,7 @@ def polish_transcript(text: str, cfg: PolishConfig) -> str:
                 index=index,
                 total=len(chunks),
                 glossary=glossary,
+                instructions=instructions,
                 cfg=cfg,
             )
         except PolishFidelityError:

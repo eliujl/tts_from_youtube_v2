@@ -16,7 +16,7 @@ A local pipeline to:
 ### Inputs
 - **YouTube** video or **playlist**
 - **Local file upload**: `.mp4/.mkv/.webm/.mov/.mp3/.wav/.m4a/.flac/.ogg/.aac`
-- **Text/document input for direct TTS**: `.txt/.vtt/.pdf` (skips ASR)
+- **Text/document input for direct TTS**: `.txt/.md/.vtt/.pdf` (skips ASR)
 - PDFs must contain selectable text; scanned/image-only PDFs require OCR first
 
 ### Modes
@@ -127,6 +127,7 @@ y2tts local "C:\path\to\video.mp4" --out out --model distil-large-v3 --tts piper
 ### 5) Text file to speech (no ASR)
 ```bash
 y2tts local "C:\path\to\script.txt" --out out --tts piper --mp3
+y2tts local "C:\path\to\notes.md" --out out --tts piper
 y2tts local "C:\path\to\captions.vtt" --out out --tts piper
 y2tts local "C:\path\to\document.pdf" --out out --tts microsoft --mp3
 ```
@@ -231,15 +232,27 @@ Open:
 
 UI supports:
 - **YouTube** URL or **Local file** upload
-- Local file accepts audio/video and `.txt/.vtt/.pdf` for direct TTS
+- Local file accepts audio/video and `.txt/.md/.vtt/.pdf` for direct TTS
 - PDF extraction supports selectable-text PDFs; scanned/image-only PDFs require OCR first
 - Task selection: **Run / Transcribe only / Download only (YouTube)**
+- A visible **Cancel** button for queued or in-flight UI jobs
 - ASR controls: model/device/VAD/language/word timestamps
 - Optional AI polish controls: none/Ollama/OpenAI-compatible, model, endpoint, glossary, chunk size, timeout, and online consent
+- Optional custom polish-requirements upload (`.txt`/`.md`) for document-specific audio editing rules
 - TTS controls: Piper/Microsoft/Coqui/none, voice selection, mp3 output
 - TTS speed control (`1.0` normal, `<1` slower, `>1` faster)
 - Optional paragraph-preserving cleanup for more natural TTS pauses (`--preserve-paragraph-breaks`)
 - Preview prefers the AI-polished transcript when one was generated
+
+Stop the local Web UI server later with:
+```bash
+y2tts ui-stop
+```
+
+Check whether this workspace has a recorded UI server with:
+```bash
+y2tts ui-status
+```
 
 ---
 
