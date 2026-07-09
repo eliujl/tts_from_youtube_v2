@@ -232,14 +232,17 @@ Open:
 
 UI supports:
 - **YouTube** URL or **Local file** upload
-- Local file accepts audio/video and `.txt/.md/.vtt/.pdf` for direct TTS
+- Local file accepts one or many audio/video/text files
+- `.txt/.md/.vtt/.pdf` local inputs go directly to optional polish/TTS
 - PDF extraction supports selectable-text PDFs; scanned/image-only PDFs require OCR first
 - Task selection: **Run / Transcribe only / Download only (YouTube)**
+- Multiple local uploads are processed one by one into separate output folders
 - A visible **Cancel** button for queued or in-flight UI jobs
 - ASR controls: model/device/VAD/language/word timestamps
 - Optional AI polish controls: none/Ollama/OpenAI-compatible, model, endpoint, glossary, chunk size, timeout, and online consent
 - Optional custom polish-requirements upload (`.txt`/`.md`) for document-specific audio editing rules
 - TTS controls: Piper/Microsoft/Coqui/none, voice selection, mp3 output
+- WebUI defaults to `TTS backend = none` and `Also output mp3 = on`
 - TTS speed control (`1.0` normal, `<1` slower, `>1` faster)
 - Optional paragraph-preserving cleanup for more natural TTS pauses (`--preserve-paragraph-breaks`)
 - Preview prefers the AI-polished transcript when one was generated

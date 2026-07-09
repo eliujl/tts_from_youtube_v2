@@ -41,6 +41,21 @@ def _coerce_file_path(v: Any) -> str | None:
     return None
 
 
+def _coerce_file_paths(v: Any) -> list[str]:
+    """Normalize one or many uploaded files across Gradio versions."""
+    if v is None:
+        return []
+    if isinstance(v, (list, tuple)):
+        paths: list[str] = []
+        for item in v:
+            p = _coerce_file_path(item)
+            if p:
+                paths.append(p)
+        return paths
+    p = _coerce_file_path(v)
+    return [p] if p else []
+
+
 def _coerce_dl_kind(v: Any) -> str:
     """Dropdown should be 'video'/'audio', but some Gradio versions can pass non-string payloads."""
     if isinstance(v, str) and v in ("video", "audio"):
@@ -236,7 +251,7 @@ def _run(
 
     source_type_norm = _coerce_source_type(source_type)
     task_norm = _coerce_task(task)
-    lf = _coerce_file_path(local_file)
+    local_paths = _coerce_file_paths(local_file)
     dl_kind_norm = _coerce_dl_kind(dl_kind)
     dl_audio_format_norm = _coerce_dl_audio_format(dl_audio_format)
 
@@ -305,12 +320,20 @@ def _run(
 
     progress(0.05, desc="Running pipeline…")
 
-    # Prefer local file if one is uploaded, even if dropdown payload is malformed.
-    if source_type_norm == "Local file" or (lf and not (youtube_url or "").strip()):
-        out_dir_path = run_local_file(Path(lf), cfg) if lf else None
-        if not out_dir_path:
-            raise gr.Error("Please upload a local audio/video/text file.")
-        return _collect_artifacts([out_dir_path])
+    # Prefer local file(s) if uploaded, even if dropdown payload is malformed.
+    if source_type_norm == "Local file" or (local_paths and not (youtube_url or "").strip()):
+        if not local_paths:
+            raise gr.Error("Please upload one or more local audio/video/text files.")
+        out_dirs: list[Path] = []
+        total = len(local_paths)
+        for index, path_str in enumerate(local_paths, start=1):
+            progress(
+                0.05 + (0.9 * (index - 1) / max(total, 1)),
+                desc=f"Processing local file {index} of {total}…",
+            )
+            out_dirs.append(run_local_file(Path(path_str), cfg))
+        progress(0.98, desc="Collecting artifacts…")
+        return _collect_artifacts(out_dirs)
 
     if source_type_norm == "YouTube":
         if not youtube_url or not youtube_url.strip():
@@ -319,10 +342,10 @@ def _run(
         return _collect_artifacts(out_dirs)
 
     # Local file
-    if not lf:
-        raise gr.Error("Please upload a local audio/video/text file.")
-    out_dir_path = run_local_file(Path(lf), cfg)
-    return _collect_artifacts([out_dir_path])
+    if not local_paths:
+        raise gr.Error("Please upload one or more local audio/video/text files.")
+    out_dirs = [run_local_file(Path(path_str), cfg) for path_str in local_paths]
+    return _collect_artifacts(out_dirs)
 
 
 def build_app(default_out: str = "out") -> gr.Blocks:
@@ -389,11 +412,13 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                         ".vtt",
                         ".pdf",
                     ],
+                    file_count="multiple",
                     type="filepath",
                     scale=2,
                 )
             gr.Markdown(
-                "Provide at least one input. Local `.txt`/`.md`/`.vtt` and text-based `.pdf` files skip ASR."
+                "Provide at least one input. You can upload multiple local files; they will be processed one by one. "
+                "Local `.txt`/`.md`/`.vtt` and text-based `.pdf` files skip ASR."
             )
 
         with gr.Accordion("3) ASR Settings (faster-whisper)", open=False):
@@ -496,7 +521,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                 tts = gr.Dropdown(
                     label="Backend",
                     choices=["piper", "microsoft", "coqui", "none"],
-                    value="piper",
+                    value="none",
                     info="Set to 'none' for transcription-only output.",
                 )
                 tts_speed = gr.Slider(
@@ -512,7 +537,7 @@ def build_app(default_out: str = "out") -> gr.Blocks:
                     value=False,
                     info="Keeps paragraph pauses in cleaned transcript for TTS pacing.",
                 )
-                mp3 = gr.Checkbox(label="Also output mp3", value=False, info="Creates `tts.mp3` in addition to wav.")
+                mp3 = gr.Checkbox(label="Also output mp3", value=True, info="Creates `tts.mp3` in addition to wav.")
 
             with gr.Accordion("Piper", open=False):
                 piper_voice = gr.Textbox(label="Voice", value="en_US-lessac-medium", info="Voice name to synthesize with.")
@@ -632,7 +657,8 @@ def build_app(default_out: str = "out") -> gr.Blocks:
         gr.Markdown(
             "### Notes\n"
             "- **Download only (YouTube)** skips ASR/TTS and just downloads media.\n"
-            "- **Local file** mode accepts audio/video plus `.txt`/`.md`/`.vtt` and text-based `.pdf` for direct TTS.\n"
+            "- **Local file** mode accepts one or many audio/video/text files and processes them one by one.\n"
+            "- `.txt`/`.md`/`.vtt` and text-based `.pdf` inputs skip ASR and go straight to optional polish/TTS.\n"
             "- Scanned/image-only PDFs must be OCRed first.\n"
             "- **Ollama polish** stays on localhost; online-compatible endpoints require explicit consent.\n"
             "- **Cancel** stops queued jobs right away; an in-progress ASR/TTS step may need a moment to finish.\n"
