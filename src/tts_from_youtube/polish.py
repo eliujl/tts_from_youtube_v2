@@ -45,8 +45,10 @@ Keep numeric expressions and quantities exactly as written in the source.
 Repair likely transcription errors, punctuation, sentence boundaries, grammar, false starts,
 and accidental repetition. Use short, natural sentences and paragraph breaks for audible pacing.
 Keep meaningful speaker context. Omit only chatter that is wholly unintelligible and nonessential.
-Omit URLs, link/share metadata, machine timestamps or IDs, tables of contents, page-navigation
-entries, and other material that is useful on a page but unsuitable for spoken audio.
+Remove timestamps such as 2021-01-11 22:52:52 when they are page or metadata noise rather than
+spoken content. Remove formatting symbols such as **, ##, -----, and similar page-only markup.
+Omit tables of contents, page-navigation entries, URLs, HTTP links, link/share metadata, machine
+timestamps or IDs, and other material that is useful on a page but unsuitable for spoken audio.
 For Chinese text, remove inappropriate spaces between Chinese characters and punctuation.
 Expand symbols or abbreviations only when needed for natural speech.
 Return only the polished transcript text, with no commentary, heading, or Markdown fence."""
