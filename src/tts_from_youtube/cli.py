@@ -6,18 +6,38 @@ import os
 import signal
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from .pipeline import RunConfig, download_only, run_local_file, run_many
+from .pipeline import RunConfig, download_only, run_local_file, run_many, run_webpage
 
-app = typer.Typer(add_completion=False, help="Download YouTube audio -> transcribe -> resynthesize (local ASR/TTS).")
+app = typer.Typer(
+    add_completion=False,
+    help="Turn YouTube, webpage, or local input into transcripts and optional speech.",
+)
 console = Console()
 UI_STATE_PATH = Path(".y2tts_ui_server.json")
 UI_TEMP_DIR = Path(".y2tts_tmp")
+
+
+def _is_probably_youtube_url(url: str) -> bool:
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return host in {"youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
+
+
+def _reject_non_youtube_run_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme in {"http", "https"} and not _is_probably_youtube_url(url):
+        console.print(
+            "[yellow]This command is for YouTube URLs. For Reddit or article pages, use:[/yellow]\n"
+            f"  y2tts webpage \"{url}\" --tts none\n"
+            "For logged-in pages, add for example: --web-cookies-from-browser chrome"
+        )
+        raise typer.Exit(code=2)
 
 
 def _print_done(paths: list[Path]) -> None:
@@ -144,6 +164,7 @@ def transcribe(
     vad: bool = typer.Option(True, "--vad/--no-vad", help="Enable Silero VAD filter"),
     word_ts: bool = typer.Option(False, "--word-ts", help="Include word-level timestamps (slower)"),
 ):
+    _reject_non_youtube_run_url(url)
     cfg = RunConfig(
         out_dir=out,
         asr_model=model,
@@ -221,6 +242,7 @@ def run(
     coqui_speaker_wav: Path | None = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
     coqui_language: str | None = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
 ):
+    _reject_non_youtube_run_url(url)
     cfg = RunConfig(
         out_dir=out,
         asr_backend="faster-whisper",
@@ -365,6 +387,7 @@ def download(
     audio_format: str = typer.Option("wav", "--audio-format", help="For --kind audio: wav|mp3"),
 ):
     """Download YouTube video/playlist only (no ASR/TTS)."""
+    _reject_non_youtube_run_url(url)
     cfg = RunConfig(out_dir=out, tts_backend="none", make_mp3=False)
     paths = download_only(url, cfg, kind=kind, audio_format=audio_format)
     _print_done(paths)
@@ -462,4 +485,119 @@ def local(
         coqui_language=coqui_language,
     )
     out_dir_path = run_local_file(path, cfg)
+    _print_done([out_dir_path])
+
+
+@app.command()
+def webpage(
+    url: str = typer.Argument(
+        ...,
+        help="Article webpage URL. Fetching uses the network and reveals the URL/IP to the site.",
+    ),
+    out: Path = typer.Option(Path("out"), "--out", "-o", help="Output directory"),
+    web_timeout: int = typer.Option(30, "--web-timeout", help="Timeout in seconds for webpage fetch"),
+    web_cookies_from_browser: str = typer.Option(
+        "",
+        "--web-cookies-from-browser",
+        help="Load logged-in browser cookies for the fetch, e.g. chrome, edge, firefox, brave.",
+    ),
+    web_browser_profile: str = typer.Option(
+        "",
+        "--web-browser-profile",
+        help="Optional browser profile name/path for --web-cookies-from-browser.",
+    ),
+    web_cookies_file: Path | None = typer.Option(
+        None,
+        "--web-cookies-file",
+        help="Netscape-format cookies.txt file for logged-in pages.",
+    ),
+    tts: str = typer.Option(
+        "none",
+        "--tts",
+        help="piper|microsoft|coqui|none. Microsoft TTS sends extracted text to Microsoft's service.",
+    ),
+    tts_speed: float = typer.Option(1.0, "--tts-speed", help="Speech rate multiplier: 1.0=normal, <1 slower, >1 faster"),
+    preserve_paragraph_breaks: bool = typer.Option(
+        False,
+        "--preserve-paragraph-breaks/--no-preserve-paragraph-breaks",
+        help="Keep paragraph breaks in cleaned article text for more natural TTS pauses.",
+    ),
+    polish: str = typer.Option(
+        "none",
+        "--polish",
+        help="AI polish backend: none|ollama|openai-compatible. Remote endpoints receive extracted text.",
+    ),
+    polish_model: str = typer.Option("", "--polish-model", help="Model used for AI polishing"),
+    polish_base_url: str = typer.Option(
+        "", "--polish-base-url", help="API base URL; Ollama defaults to localhost:11434"
+    ),
+    polish_api_key_env: str = typer.Option(
+        "OPENAI_API_KEY", "--polish-api-key-env", help="Environment variable containing API key"
+    ),
+    polish_glossary: Path | None = typer.Option(
+        None, "--polish-glossary", help="Optional UTF-8 terminology glossary"
+    ),
+    polish_instructions: Path | None = typer.Option(
+        None, "--polish-instructions", help="Optional UTF-8 custom polish requirements"
+    ),
+    polish_chunk_chars: int = typer.Option(
+        8000, "--polish-chunk-chars", help="Maximum source characters per polish request"
+    ),
+    polish_timeout: int = typer.Option(
+        600, "--polish-timeout", help="Timeout in seconds for each polish request"
+    ),
+    ollama_num_gpu: int | None = typer.Option(
+        None,
+        "--ollama-num-gpu",
+        help="Ollama GPU layers; use 0 for CPU-only stability on older GPUs",
+    ),
+    allow_online_polish: bool = typer.Option(
+        False,
+        "--allow-online-polish",
+        help="Allow extracted text to be sent to a non-local polish endpoint",
+    ),
+    mp3: bool = typer.Option(False, "--mp3", help="Also create mp3 output (requires ffmpeg + libmp3lame)"),
+    piper_voice: str = typer.Option("en_US-lessac-medium", "--piper-voice", help="Piper voice name"),
+    piper_data_dir: Path | None = typer.Option(None, "--piper-data-dir", help="Piper voice directory"),
+    piper_cuda: bool = typer.Option(False, "--piper-cuda", help="Use Piper CUDA (requires onnxruntime-gpu)"),
+    microsoft_voice: str = typer.Option(
+        "en-US-MichelleNeural", "--microsoft-voice", help="Microsoft Edge neural voice"
+    ),
+    coqui_model: str = typer.Option("tts_models/en/jenny/jenny", "--coqui-model", help="Coqui model name"),
+    coqui_speaker_wav: Path | None = typer.Option(None, "--coqui-speaker-wav", help="Speaker wav for cloning"),
+    coqui_language: str | None = typer.Option(None, "--coqui-language", help="Language for multilingual models"),
+):
+    """Extract an article webpage, then optionally polish and synthesize it."""
+    cfg = RunConfig(
+        out_dir=out,
+        tts_backend=tts,  # type: ignore[arg-type]
+        tts_speed=tts_speed,
+        preserve_paragraph_breaks=preserve_paragraph_breaks,
+        polish_backend=polish,  # type: ignore[arg-type]
+        polish_model=polish_model,
+        polish_base_url=polish_base_url,
+        polish_api_key_env=polish_api_key_env,
+        polish_glossary_path=polish_glossary,
+        polish_instructions_path=polish_instructions,
+        polish_chunk_chars=polish_chunk_chars,
+        polish_timeout_seconds=polish_timeout,
+        polish_allow_remote=allow_online_polish,
+        polish_ollama_num_gpu=ollama_num_gpu,
+        make_mp3=mp3,
+        piper_voice=piper_voice,
+        piper_data_dir=piper_data_dir,
+        piper_use_cuda=piper_cuda,
+        microsoft_voice=microsoft_voice,
+        coqui_model=coqui_model,
+        coqui_speaker_wav=coqui_speaker_wav,
+        coqui_language=coqui_language,
+    )
+    out_dir_path = run_webpage(
+        url,
+        cfg,
+        timeout_seconds=web_timeout,
+        browser_cookies_from=web_cookies_from_browser.strip() or None,
+        browser_profile=web_browser_profile.strip() or None,
+        cookie_file=web_cookies_file,
+    )
     _print_done([out_dir_path])

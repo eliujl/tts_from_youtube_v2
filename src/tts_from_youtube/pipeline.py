@@ -11,6 +11,7 @@ from .download import DownloadResult, download_best_audio, download_video, expan
 from .polish import PolishBackend, PolishConfig, polish_transcript
 from .text import basic_cleanup, load_text_input, tts_cleanup
 from .utils import ensure_dir, sanitize_filename
+from .webpage import extract_webpage_text
 
 ASRBackend = Literal["faster-whisper"]
 TTSBackend = Literal["none", "piper", "microsoft", "coqui"]
@@ -51,6 +52,7 @@ class RunConfig:
     prefer_captions: bool = True
     download_captions: bool = True
     make_mp3: bool = False
+    remove_fillers: bool = True
 
 
 def _write_manifest(out_dir: Path, payload: dict) -> None:
@@ -184,6 +186,63 @@ def _synthesize(text: str, out_dir: Path, cfg: RunConfig) -> Path | None:
     return out_wav
 
 
+def _run_text(
+    raw_text: str,
+    title: str,
+    cfg: RunConfig,
+    *,
+    source: dict[str, object],
+    remove_fillers: bool = False,
+) -> Path:
+    ensure_dir(cfg.out_dir)
+    if cfg.tts_speed <= 0:
+        raise ValueError("tts_speed must be > 0.")
+    if not raw_text.strip():
+        raise ValueError("No usable text found in input.")
+
+    safe_title = sanitize_filename(title) or "text"
+    work_dir = ensure_dir(cfg.out_dir / safe_title)
+
+    transcript_txt = _artifact_path(work_dir, "transcript", "txt")
+    transcript_txt.write_text(raw_text.rstrip() + "\n", encoding="utf-8")
+    cleaned = basic_cleanup(
+        raw_text,
+        remove_fillers=remove_fillers,
+        preserve_paragraph_breaks=(
+            cfg.preserve_paragraph_breaks or cfg.polish_backend != "none"
+        ),
+    )
+    transcript_clean = _artifact_path(work_dir, "transcript_clean", "txt")
+    transcript_clean.write_text(cleaned + "\n", encoding="utf-8")
+    tts_text, transcript_tts = _prepare_tts_text(cleaned, work_dir, cfg)
+    tts_path = _synthesize(tts_text, work_dir, cfg)
+
+    _write_manifest(
+        work_dir,
+        {
+            **source,
+            "title": safe_title,
+            "polish": {
+                "backend": cfg.polish_backend,
+                "model": cfg.polish_model or None,
+                "output": str(transcript_tts) if transcript_tts else None,
+            },
+            "tts": {
+                "backend": cfg.tts_backend,
+                "speed": cfg.tts_speed,
+                "output": str(tts_path) if tts_path else None,
+            },
+            "artifacts": {
+                "transcript": str(transcript_txt),
+                "transcript_clean": str(transcript_clean),
+                **({"transcript_tts": str(transcript_tts)} if transcript_tts else {}),
+            },
+        },
+    )
+
+    return work_dir
+
+
 def run_single(url: str, cfg: RunConfig) -> Path:
     ensure_dir(cfg.out_dir)
     if cfg.tts_speed <= 0:
@@ -208,6 +267,7 @@ def run_single(url: str, cfg: RunConfig) -> Path:
 
     cleaned = basic_cleanup(
         t.to_text(),
+        remove_fillers=cfg.remove_fillers,
         preserve_paragraph_breaks=(
             cfg.preserve_paragraph_breaks or cfg.polish_backend != "none"
         ),
@@ -273,53 +333,22 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
         raise FileNotFoundError(str(src))
 
     title = sanitize_filename(src.stem)
-    work_dir = ensure_dir(cfg.out_dir / title)
 
     # Text-first path: no ASR needed, synthesize directly from provided text/document.
     if src.suffix.lower() in {".txt", ".md", ".vtt", ".pdf"}:
         raw_text = load_text_input(src)
-        if not raw_text:
-            raise ValueError(f"No usable text found in input file: {src}")
-
-        transcript_txt = _artifact_path(work_dir, "transcript", "txt")
-        transcript_txt.write_text(raw_text + "\n", encoding="utf-8")
-        cleaned = basic_cleanup(
+        return _run_text(
             raw_text,
-            preserve_paragraph_breaks=(
-                cfg.preserve_paragraph_breaks or cfg.polish_backend != "none"
-            ),
-        )
-        transcript_clean = _artifact_path(work_dir, "transcript_clean", "txt")
-        transcript_clean.write_text(cleaned + "\n", encoding="utf-8")
-        tts_text, transcript_tts = _prepare_tts_text(cleaned, work_dir, cfg)
-        tts_path = _synthesize(tts_text, work_dir, cfg)
-
-        _write_manifest(
-            work_dir,
-            {
+            title,
+            cfg,
+            source={
                 "source_file": str(src),
-                "title": title,
                 "input_kind": "text",
-                "polish": {
-                    "backend": cfg.polish_backend,
-                    "model": cfg.polish_model or None,
-                    "output": str(transcript_tts) if transcript_tts else None,
-                },
-                "tts": {
-                    "backend": cfg.tts_backend,
-                    "speed": cfg.tts_speed,
-                    "output": str(tts_path) if tts_path else None,
-                },
-                "artifacts": {
-                    "transcript": str(transcript_txt),
-                    "transcript_clean": str(transcript_clean),
-                    **({"transcript_tts": str(transcript_tts)} if transcript_tts else {}),
-                },
             },
         )
-        return work_dir
 
     # Normalize/extract audio for ASR
+    work_dir = ensure_dir(cfg.out_dir / title)
     norm_wav = _artifact_path(work_dir, "audio_16k", "wav")
     normalize_for_asr(src, norm_wav)
 
@@ -328,6 +357,7 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
 
     cleaned = basic_cleanup(
         t.to_text(),
+        remove_fillers=cfg.remove_fillers,
         preserve_paragraph_breaks=(
             cfg.preserve_paragraph_breaks or cfg.polish_backend != "none"
         ),
@@ -372,6 +402,34 @@ def run_local_file(path: Path, cfg: RunConfig) -> Path:
     )
 
     return work_dir
+
+
+def run_webpage(
+    url: str,
+    cfg: RunConfig,
+    *,
+    timeout_seconds: int = 30,
+    browser_cookies_from: str | None = None,
+    browser_profile: str | None = None,
+    cookie_file: Path | None = None,
+) -> Path:
+    page = extract_webpage_text(
+        url,
+        timeout_seconds=timeout_seconds,
+        browser_cookies_from=browser_cookies_from,
+        browser_profile=browser_profile,
+        cookie_file=cookie_file,
+    )
+    return _run_text(
+        page.text,
+        page.title,
+        cfg,
+        source={
+            "source_url": page.url,
+            "source_final_url": page.final_url,
+            "input_kind": "webpage",
+        },
+    )
 
 
 def download_only(url: str, cfg: RunConfig, *, kind: str = "video", audio_format: str = "wav") -> list[Path]:

@@ -1,7 +1,8 @@
-# y2tts — YouTube / Local → Transcribe → TTS
+# y2tts — YouTube / Webpage / Local → Transcribe → TTS
 
 A local pipeline to:
 - **Download** YouTube videos/playlists (or use a **local video/audio file**)
+- **Extract readable article text** from an ordinary webpage URL
 - **Transcribe** with **faster-whisper**
 - Optionally **polish messy transcripts with AI**, either locally through Ollama or through an explicitly approved compatible endpoint
 - Optionally **re-synthesize** clean speech with **Piper** (default), **Microsoft Edge Neural TTS**, or **Coqui TTS**
@@ -15,12 +16,14 @@ A local pipeline to:
 
 ### Inputs
 - **YouTube** video or **playlist**
+- **Webpage article URL**: ordinary `http://` or `https://` pages with readable HTML article text
 - **Local file upload**: `.mp4/.mkv/.webm/.mov/.mp3/.wav/.m4a/.flac/.ogg/.aac`
 - **Text/document input for direct TTS**: `.txt/.md/.vtt/.pdf` (skips ASR)
 - PDFs must contain selectable text; scanned/image-only PDFs require OCR first
 
 ### Modes
 - **Run (ASR + TTS)**: download/extract audio → transcribe → synthesize
+- **Webpage/document to TTS**: extract/load text → cleanup → optional polish → optional synthesize; skips ASR
 - **Transcribe only**: download/extract audio → transcribe
 - **Optional AI polish** works with either mode and writes a separate reviewable artifact
 - **Download only (YouTube)**: just download media, no ASR/TTS
@@ -36,6 +39,8 @@ A local pipeline to:
 - `<title>.manifest.json` — run metadata
 - `<title>.audio_16k.wav` — normalized ASR input audio
 - `<title>.wav` (and optional `<title>.mp3`) — synthesized TTS output
+
+For webpage runs, the manifest records `input_kind=webpage`, the original `source_url`, and the redirected `source_final_url`. The fetched HTML is not saved; the extracted raw text is the reviewable source artifact.
 
 ---
 
@@ -132,7 +137,36 @@ y2tts local "C:\path\to\captions.vtt" --out out --tts piper
 y2tts local "C:\path\to\document.pdf" --out out --tts microsoft --mp3
 ```
 
-### 6) Offline AI polish with Ollama
+### 6) Webpage article to text / speech (no ASR)
+```powershell
+# Extract only, then review transcript_clean.txt
+y2tts webpage "https://example.org/article" --out out --tts none
+
+# Extract and polish locally, then review transcript_tts.txt
+y2tts webpage "https://example.org/article" --out out --tts none `
+  --polish ollama --polish-model MODEL_NAME
+
+# After review, synthesize (this fetches/extracts the page again)
+y2tts webpage "https://example.org/article" --out out --tts microsoft --mp3 `
+  --microsoft-voice en-US-MichelleNeural
+
+# Logged-in pages such as Reddit can use Firefox browser cookies
+y2tts webpage "https://www.reddit.com/r/example/comments/POST/thread/" --out out --tts none `
+  --web-cookies-from-browser firefox
+
+# Or use an exported Netscape-format cookies.txt file
+y2tts webpage "https://www.reddit.com/r/example/comments/POST/thread/" --out out --tts none `
+  --web-cookies-file cookies.txt
+```
+
+Webpage mode fetches the page over the network, extracts main readable text, and skips ASR. Paywalls, login pages, bot protection, JavaScript-only rendering, and unusually structured pages may fail; save or upload the article as `.txt` when extraction is blocked.
+If a page needs your existing browser login, add `--web-cookies-from-browser firefox`, `chrome`, `edge`, or another supported browser. Use `--web-browser-profile` when the login is in a non-default profile. You normally do not need to keep Firefox open; staying logged in is the important part, and closing Firefox can avoid cookie-database lock errors.
+
+Reddit post URLs use Reddit's thread response and include the original post plus nested comments and replies. If Reddit omits a large "more comments" group from one response, the transcript reports the omitted count instead of silently dropping it.
+
+On Windows, current Brave/Chrome releases may report `Failed to decrypt with DPAPI` because their cookies use app-bound encryption. A profile path, closing Brave/Chrome, or running as administrator usually will not fix that. In that case, export the needed cookies in Netscape `cookies.txt` format and use `--web-cookies-file cookies.txt`, or log into the page with Firefox and choose Firefox cookies. The Web UI provides an **Exported cookies.txt** upload under **Webpage Settings**.
+
+### 7) Offline AI polish with Ollama
 
 Install and run [Ollama](https://docs.ollama.com/), then install a text model of your choice. The model must already exist locally before running the pipeline.
 
@@ -174,7 +208,7 @@ Polishing is intentionally conservative:
 - successful chunks are checkpointed in `<output>/.polish_chunks/`, so a failed long run can resume
 - a larger instruction-following model is strongly recommended for lectures and technical material
 
-### 7) Other OpenAI-compatible polish endpoints
+### 8) Other OpenAI-compatible polish endpoints
 
 Compatible local servers such as LM Studio or llama.cpp can use the same endpoint shape. A non-local URL is blocked unless online polishing is explicitly allowed:
 
@@ -188,7 +222,7 @@ y2tts local "C:\path\to\transcript.txt" --out out --tts none \
 
 `--allow-online-polish` means transcript chunks may leave the computer. API keys are read from environment variables and should not be placed on the command line or in the UI.
 
-### 8) Microsoft Edge Neural TTS (online, no API key)
+### 9) Microsoft Edge Neural TTS (online, no API key)
 ```bash
 y2tts local "C:\path\to\script.txt" --out out --tts microsoft --mp3 \
   --microsoft-voice en-US-MichelleNeural --tts-speed 0.9 \
@@ -231,8 +265,10 @@ Open:
 - http://127.0.0.1:7860
 
 UI supports:
-- **YouTube** URL or **Local file** upload
+- **YouTube** URL, **Webpage** article URL, or **Local file** upload
 - Local file accepts one or many audio/video/text files
+- Webpage input extracts article text and skips ASR
+- Webpage input can optionally load browser cookies for logged-in pages
 - `.txt/.md/.vtt/.pdf` local inputs go directly to optional polish/TTS
 - PDF extraction supports selectable-text PDFs; scanned/image-only PDFs require OCR first
 - Task selection: **Run / Transcribe only / Download only (YouTube)**
@@ -247,6 +283,8 @@ UI supports:
 - Optional paragraph-preserving cleanup for more natural TTS pauses (`--preserve-paragraph-breaks`)
 - Preview prefers the AI-polished transcript when one was generated
 
+Webpage fetching is done by this local program. It may access the network URL you provide; this reveals your IP address and the requested URL to the destination site. The app blocks private/local IP literals and can use browser cookies or an exported `cookies.txt` file for logged-in pages, but it does not run page JavaScript.
+
 Stop the local Web UI server later with:
 ```bash
 y2tts ui-stop
@@ -260,6 +298,18 @@ y2tts ui-status
 ---
 
 ## Notes / Tips
+
+### Webpage limitations and privacy
+- Webpage extraction works best on article-like HTML with selectable text.
+- Paywalls, login-only pages, bot protection, JavaScript-only pages, and unusual layouts may fail or extract too little text.
+- For logged-in pages, use `--web-cookies-from-browser firefox`, another supported browser, or `--web-cookies-file cookies.txt`.
+- You normally do not need to keep Firefox open for cookie use; if cookie loading fails with a lock/permission error, close Firefox completely and retry.
+- On Windows, Brave/Chrome cookie loading may fail with `Failed to decrypt with DPAPI`; use Firefox cookies or an exported Netscape-format `cookies.txt` file instead.
+- If extraction fails, save the article text locally and use `y2tts local article.txt ...`.
+- Fetching a webpage reveals your IP address and requested URL to the site.
+- Remote AI polishing sends extracted text to the configured service when `--allow-online-polish` is enabled.
+- Microsoft TTS sends extracted text to Microsoft's online Edge speech service.
+- Ollama polishing plus Piper TTS keeps post-fetch processing local.
 
 ### Model selection (faster-whisper)
 Common choices:
