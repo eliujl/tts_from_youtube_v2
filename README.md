@@ -267,6 +267,7 @@ Open:
 UI supports:
 - **YouTube** URL, **Webpage** article URL, or **Local file** upload
 - Local file accepts one or many audio/video/text files
+- The URL box accepts multiple YouTube links or multiple webpage links, one per line
 - Webpage input extracts article text and skips ASR
 - Webpage input can optionally load browser cookies for logged-in pages
 - `.txt/.md/.vtt/.pdf` local inputs go directly to optional polish/TTS

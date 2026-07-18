@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 from tts_from_youtube.cli import app
 from tts_from_youtube.pipeline import RunConfig, run_webpage
 from tts_from_youtube.ui import _run as ui_run
-from tts_from_youtube.ui import _webpage_error_message
+from tts_from_youtube.ui import _split_url_entries, _webpage_error_message
 from tts_from_youtube.webpage import (
     MAX_WEBPAGE_BYTES,
     WebpageExtractionError,
@@ -567,6 +567,135 @@ def test_ui_webpage_passes_browser_cookie_options(
     assert captured["browser_cookies_from"] == "chrome"
     assert captured["browser_profile"] == "Default"
     assert captured["cookie_file"] is None
+
+
+def test_ui_splits_multiple_urls_from_textbox() -> None:
+    assert _split_url_entries("https://a.example/one\nhttps://b.example/two") == [
+        "https://a.example/one",
+        "https://b.example/two",
+    ]
+    assert _split_url_entries(" https://a.example/one, https://b.example/two ") == [
+        "https://a.example/one",
+        "https://b.example/two",
+    ]
+
+
+def test_ui_webpage_runs_multiple_links(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[str] = []
+
+    def fake_run_webpage(url, cfg, **kwargs):
+        captured.append(url)
+        out_dir = tmp_path / f"Webpage{len(captured)}"
+        out_dir.mkdir()
+        (out_dir / f"Webpage{len(captured)}.transcript_clean.txt").write_text("preview", encoding="utf-8")
+        return out_dir
+
+    monkeypatch.setattr("tts_from_youtube.ui.run_webpage", fake_run_webpage)
+
+    summary, preview, _artifacts = ui_run(
+        "Webpage",
+        "https://example.org/one\nhttps://example.org/two",
+        None,
+        str(tmp_path),
+        "Run (ASR + TTS)",
+        "distil-large-v3",
+        "auto",
+        "",
+        "",
+        True,
+        False,
+        "none",
+        "",
+        "",
+        "OPENAI_API_KEY",
+        None,
+        None,
+        8000,
+        600,
+        0,
+        False,
+        "none",
+        1.0,
+        False,
+        True,
+        "en_US-lessac-medium",
+        "",
+        False,
+        "en-US-MichelleNeural",
+        "tts_models/en/jenny/jenny",
+        None,
+        "",
+        "video",
+        "wav",
+        30,
+        "firefox",
+        "",
+        None,
+    )
+
+    assert captured == ["https://example.org/one", "https://example.org/two"]
+    assert "Webpage1" in summary
+    assert "Webpage2" in summary
+    assert preview == "preview"
+
+
+def test_ui_youtube_runs_multiple_links(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[str] = []
+
+    def fake_run_many(url, cfg):
+        captured.append(url)
+        out_dir = tmp_path / f"YouTube{len(captured)}"
+        out_dir.mkdir()
+        (out_dir / f"YouTube{len(captured)}.transcript_clean.txt").write_text("preview", encoding="utf-8")
+        return [out_dir]
+
+    monkeypatch.setattr("tts_from_youtube.ui.run_many", fake_run_many)
+
+    summary, preview, _artifacts = ui_run(
+        "YouTube",
+        "https://youtu.be/one\nhttps://www.youtube.com/watch?v=two",
+        None,
+        str(tmp_path),
+        "Run (ASR + TTS)",
+        "distil-large-v3",
+        "auto",
+        "",
+        "",
+        True,
+        False,
+        "none",
+        "",
+        "",
+        "OPENAI_API_KEY",
+        None,
+        None,
+        8000,
+        600,
+        0,
+        False,
+        "none",
+        1.0,
+        False,
+        True,
+        "en_US-lessac-medium",
+        "",
+        False,
+        "en-US-MichelleNeural",
+        "tts_models/en/jenny/jenny",
+        None,
+        "",
+        "video",
+        "wav",
+        30,
+        "",
+        "",
+        None,
+    )
+
+    assert captured == ["https://youtu.be/one", "https://www.youtube.com/watch?v=two"]
+    assert "YouTube1" in summary
+    assert "YouTube2" in summary
+    assert preview == "preview"
 
 
 def test_ui_webpage_error_message_explains_cookie_permission_failure() -> None:

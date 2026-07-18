@@ -17,6 +17,11 @@ def _is_youtube_url(url: str) -> bool:
     return host in {"youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
 
 
+def _split_url_entries(value: str) -> list[str]:
+    """Split a textbox value into one or many URL entries."""
+    return [part.strip() for part in value.replace(",", "\n").splitlines() if part.strip()]
+
+
 def _webpage_error_message(
     exc: Exception,
     *,
@@ -318,15 +323,16 @@ def _run(
     local_paths = _coerce_file_paths(local_file)
     dl_kind_norm = _coerce_dl_kind(dl_kind)
     dl_audio_format_norm = _coerce_dl_audio_format(dl_audio_format)
-    url_text = (youtube_url or "").strip()
+    url_entries = _split_url_entries(youtube_url or "")
+    url_text = url_entries[0] if len(url_entries) == 1 else "\n".join(url_entries)
 
     # If someone pastes a Reddit/article URL but leaves the source on YouTube,
     # route it to the webpage extractor instead of invoking yt-dlp.
     if (
         source_type_norm == "YouTube"
-        and url_text
+        and url_entries
         and not task_norm.startswith("Download only")
-        and not _is_youtube_url(url_text)
+        and all(not _is_youtube_url(url) for url in url_entries)
     ):
         source_type_norm = "Webpage"
 
@@ -334,21 +340,21 @@ def _run(
     if task_norm.startswith("Download only"):
         if source_type_norm != "YouTube":
             raise gr.Error("Download-only is only available for YouTube sources.")
-        if not url_text:
+        if not url_entries:
             raise gr.Error("Please provide a YouTube video or playlist URL.")
-        if not _is_youtube_url(url_text):
+        non_youtube_urls = [url for url in url_entries if not _is_youtube_url(url)]
+        if non_youtube_urls:
             raise gr.Error(
                 "This looks like a webpage, not a YouTube URL. Choose Source = Webpage. "
                 "For logged-in pages such as Reddit, open Webpage Settings and set Browser cookies."
             )
         cfg = RunConfig(out_dir=out_path, tts_backend="none", make_mp3=False)
         progress(0.05, desc="Downloading…")
-        out_dirs = download_only(
-            url_text,
-            cfg,
-            kind=dl_kind_norm,
-            audio_format=dl_audio_format_norm,
-        )
+        out_dirs: list[Path] = []
+        total = len(url_entries)
+        for index, url in enumerate(url_entries, start=1):
+            progress(0.05 + (0.9 * (index - 1) / max(total, 1)), desc=f"Downloading link {index} of {total}…")
+            out_dirs.extend(download_only(url, cfg, kind=dl_kind_norm, audio_format=dl_audio_format_norm))
         return _collect_artifacts(out_dirs)
 
     # ASR/TTS runs
@@ -401,8 +407,11 @@ def _run(
     progress(0.05, desc="Running pipeline…")
 
     if source_type_norm == "Webpage":
-        if not url_text:
+        if not url_entries:
             raise gr.Error("Please provide an article webpage URL.")
+        youtube_urls = [url for url in url_entries if _is_youtube_url(url)]
+        if youtube_urls:
+            raise gr.Error("One batch can use YouTube links or webpage links, but not both. Choose Source = YouTube for YouTube links.")
         progress(0.1, desc="Fetching and extracting webpage…")
         browser_cookies = (web_cookies_from_browser or "").strip() or None
         browser_profile = (web_browser_profile or "").strip() or None
@@ -411,19 +420,28 @@ def _run(
         if cookie_file:
             browser_cookies = None
             browser_profile = None
+        out_dirs: list[Path] = []
+        total = len(url_entries)
         try:
-            out_dir_path = run_webpage(
-                url_text,
-                cfg,
-                timeout_seconds=int(web_timeout),
-                browser_cookies_from=browser_cookies,
-                browser_profile=browser_profile,
-                cookie_file=cookie_file,
-            )
+            for index, url in enumerate(url_entries, start=1):
+                progress(
+                    0.1 + (0.85 * (index - 1) / max(total, 1)),
+                    desc=f"Fetching webpage {index} of {total}…",
+                )
+                out_dirs.append(
+                    run_webpage(
+                        url,
+                        cfg,
+                        timeout_seconds=int(web_timeout),
+                        browser_cookies_from=browser_cookies,
+                        browser_profile=browser_profile,
+                        cookie_file=cookie_file,
+                    )
+                )
         except WebpageExtractionError as exc:
             message = _webpage_error_message(
                 exc,
-                url=url_text,
+                url=url_entries[min(len(out_dirs), len(url_entries) - 1)],
                 browser_cookies_from=browser_cookies,
                 browser_profile=browser_profile,
             )
@@ -431,13 +449,13 @@ def _run(
         except Exception as exc:
             message = _webpage_error_message(
                 exc,
-                url=url_text,
+                url=url_entries[min(len(out_dirs), len(url_entries) - 1)],
                 browser_cookies_from=browser_cookies,
                 browser_profile=browser_profile,
             )
             raise gr.Error(message) from exc
         progress(0.98, desc="Collecting artifacts…")
-        return _collect_artifacts([out_dir_path])
+        return _collect_artifacts(out_dirs)
 
     # Prefer local file(s) if uploaded, even if dropdown payload is malformed.
     if source_type_norm == "Local file" or (local_paths and not url_text):
@@ -455,14 +473,19 @@ def _run(
         return _collect_artifacts(out_dirs)
 
     if source_type_norm == "YouTube":
-        if not url_text:
+        if not url_entries:
             raise gr.Error("Please provide a YouTube video or playlist URL.")
-        if not _is_youtube_url(url_text):
+        non_youtube_urls = [url for url in url_entries if not _is_youtube_url(url)]
+        if non_youtube_urls:
             raise gr.Error(
                 "This looks like a webpage, not a YouTube URL. Choose Source = Webpage. "
                 "For logged-in pages such as Reddit, open Webpage Settings and set Browser cookies."
             )
-        out_dirs = run_many(url_text, cfg)
+        out_dirs = []
+        total = len(url_entries)
+        for index, url in enumerate(url_entries, start=1):
+            progress(0.05 + (0.9 * (index - 1) / max(total, 1)), desc=f"Processing YouTube link {index} of {total}…")
+            out_dirs.extend(run_many(url, cfg))
         return _collect_artifacts(out_dirs)
 
     # Local file
@@ -514,8 +537,9 @@ def build_app(default_out: str = "out") -> gr.Blocks:
             with gr.Row():
                 youtube_url = gr.Textbox(
                     label="URL",
-                    placeholder="YouTube URL or https://example.org/article",
-                    info="Used when Source is YouTube or Webpage.",
+                    placeholder="Paste one link per line",
+                    info="Used when Source is YouTube or Webpage. Multiple links are allowed for one source type.",
+                    lines=3,
                     scale=3,
                 )
                 local_file = _gr_file(
